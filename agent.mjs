@@ -12,7 +12,7 @@ dotenv.config();
 const AI_PROVIDER = process.env.AI_PROVIDER?.toLowerCase() || "google";
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const AI_MODEL = process.env.AI_MODEL || (AI_PROVIDER === "openai" ? "gpt-4o-mini" : "gemini-2.0-flash");
+const AI_MODEL = process.env.AI_MODEL || (AI_PROVIDER === "openai" ? "gpt-4o-mini" : "gemini-flash-lite-latest");
 
 // إعدادات واتساب Webhook
 const PORT = parseInt(process.env.PORT, 10) || 3000;
