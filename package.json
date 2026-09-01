@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-ai-agent-kareem",
+  "version": "1.0.0",
+  "description": "AI Sales Agent على واتساب باسم كريم لمتجر مستلزمات رياضية",
+  "type": "module",
+  "main": "agent.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node agent.mjs --test"
+  },
+  "keywords": [
+    "whatsapp",
+    "ai-agent",
+    "sales",
+    "chatbot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "openai": "^4.104.0"
+  }
+}
