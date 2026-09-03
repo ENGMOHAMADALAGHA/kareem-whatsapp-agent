@@ -156,37 +156,95 @@ function mockReply(userMessage) {
 }
 
 // ──────────────────────────────────────────────
-// 5. الدالة الأساسية: getKareemReply
+// 5. ذاكرة المحادثة (لكل رقم واتساب)
 // ──────────────────────────────────────────────
-export async function getKareemReply(userMessage) {
-  // وضع DEMO بدون استهلاك API
+const conversations = new Map(); // phone -> [{role, text, timestamp}]
+const MAX_HISTORY = 10; // آخر 10 رسائل (5 تبادلات)
+const MEMORY_TTL_MS = 1000 * 60 * 60 * 6; // 6 ساعات
+
+function getHistory(phone) {
+  const entry = conversations.get(phone);
+  if (!entry) return [];
+  // تنظيف المنتهية
+  if (Date.now() - entry.updatedAt > MEMORY_TTL_MS) {
+    conversations.delete(phone);
+    return [];
+  }
+  return entry.messages;
+}
+
+function pushHistory(phone, role, text) {
+  let entry = conversations.get(phone);
+  if (!entry) {
+    entry = { messages: [], updatedAt: Date.now() };
+    conversations.set(phone, entry);
+  }
+  entry.messages.push({ role, text, ts: Date.now() });
+  if (entry.messages.length > MAX_HISTORY) entry.messages.shift();
+  entry.updatedAt = Date.now();
+}
+
+export function clearMemory(phone) {
+  if (phone) conversations.delete(phone);
+  else conversations.clear();
+}
+
+export function getMemoryStats() {
+  return { conversations: conversations.size, maxHistory: MAX_HISTORY };
+}
+
+// ──────────────────────────────────────────────
+// 6. الدالة الأساسية: getKareemReply (مع ذاكرة)
+// ──────────────────────────────────────────────
+export async function getKareemReply(userMessage, phone = "default") {
+  // وضع DEMO بدون استهلاك API - مع ذاكرة بسيطة
   if (isDemoMode) {
-    // محاكاة تأخير شبكة بسيط
     await new Promise((r) => setTimeout(r, 300));
-    return mockReply(userMessage);
+    const result = mockReply(userMessage);
+    // حفظ في الذاكرة حتى في وضع DEMO
+    pushHistory(phone, "user", userMessage);
+    pushHistory(phone, "assistant", result.reply);
+    return result;
   }
 
   try {
     let rawText = "";
+    const history = getHistory(phone);
+    // تحويل التاريخ لنص للسياق
+    const historyContext = history.map(m => `${m.role === "user" ? "العميل" : "كريم"}: ${m.text}`).join("\n");
 
     if (AI_PROVIDER === "google") {
+      // نمرر التاريخ كجزء من السياق + الرسالة الحالية
+      const fullContents = [];
+      // إضافة التاريخ كمحادثة سابقة
+      for (const h of history) {
+        fullContents.push({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.text }] });
+      }
+      fullContents.push({ role: "user", parts: [{ text: userMessage }] });
+
       const response = await googleClient.models.generateContent({
         model: AI_MODEL,
-        contents: [{ role: "user", parts: [{ text: userMessage }] }],
+        contents: fullContents,
         config: {
-          systemInstruction: SYSTEM_PROMPT,
+          systemInstruction: SYSTEM_PROMPT + (historyContext ? `\n\n# سجل المحادثة السابقة مع هذا العميل (${phone}):\n${historyContext}\n(استخدمه لتتذكر ماذا طلب العميل ولا تكرر الأسئلة)` : ""),
           responseMimeType: "application/json",
           temperature: 0.7,
         },
       });
       rawText = response.text;
     } else {
+      const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+      if (historyContext) {
+        messages.push({ role: "system", content: `سجل المحادثة السابقة مع العميل ${phone}:\n${historyContext}` });
+      }
+      for (const h of history) {
+        messages.push({ role: h.role === "user" ? "user" : "assistant", content: h.text });
+      }
+      messages.push({ role: "user", content: userMessage });
+
       const completion = await openaiClient.chat.completions.create({
         model: AI_MODEL,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage },
-        ],
+        messages,
         response_format: { type: "json_object" },
         temperature: 0.7,
       });
@@ -215,10 +273,16 @@ export async function getKareemReply(userMessage) {
       console.warn(`  ⚠️  تحذير: الرد يحتوي على منتج غير مصرح به!`);
     }
 
+    // حفظ في الذاكرة
+    pushHistory(phone, "user", userMessage);
+    pushHistory(phone, "assistant", parsed.reply);
     return parsed;
   } catch (err) {
     console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
-    return mockReply(userMessage);
+    const fallback = mockReply(userMessage);
+    pushHistory(phone, "user", userMessage);
+    pushHistory(phone, "assistant", fallback.reply);
+    return fallback;
   }
 }
 
@@ -343,9 +407,10 @@ export function createApp() {
 
             console.log(`\n${"─".repeat(60)}`);
             console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"`);
+            console.log(`  🧠 الذاكرة: ${getHistory(from).length} رسائل سابقة`);
 
-            // إرسال إلى الذكاء الاصطناعي
-            const result = await processCustomerMessage(text);
+            // إرسال إلى الذكاء الاصطناعي مع ذاكرة المحادثة
+            const result = await processCustomerMessage(text, from);
 
             console.log(`  🤖 كريم -> intent=${result.intent} transfer=${result.transfer_to_human}`);
             console.log(`  💬 الرد: "${result.reply}"`);
