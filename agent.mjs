@@ -27,7 +27,10 @@ import {
   listOrders,
   markOrderPaid,
   createPaymentLink,
+  dueCartReminders,
+  markCartReminded,
 } from "./orders.mjs";
+import { logEvent, listEvents, toCSV } from "./crm.mjs";
 
 dotenv.config();
 
@@ -603,9 +606,46 @@ export function createApp() {
     if (!order) return res.status(404).send("الطلب غير موجود");
     if (req.query.paid === "1") {
       markOrderPaid(order.id);
+      logEvent("order_paid", { tenantId: order.tenantId, phone: order.phone, orderId: order.id, total: order.total }).catch(() => {});
       return res.send(`<h2>تم الدفع ✅ ${order.id} - $${order.total}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
     }
     res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);
+  });
+
+  // ── CRM: سجل الأحداث + تصدير CSV ──
+  app.get("/admin/crm", (req, res) => {
+    const { tenant, type, limit } = req.query;
+    const events = listEvents({ tenantId: tenant, type, limit: Number(limit || 100) });
+    res.json({ count: events.length, events });
+  });
+  app.get("/admin/crm/export.csv", (req, res) => {
+    const { tenant, type } = req.query;
+    const events = listEvents({ tenantId: tenant, type, limit: 2000 });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=crm.csv");
+    res.send("\uFEFF" + toCSV(events));
+  });
+
+  // ── سلة مهجورة: تشغيل يدوي ──
+  app.post("/admin/cart-remind-run", async (req, res) => {
+    const afterMinutes = Number(req.body?.afterMinutes ?? 60);
+    const due = dueCartReminders({ afterMinutes });
+    const sent = [];
+    for (const o of due) {
+      const tenant = getTenantFull(o.tenantId);
+      if (!tenant) continue;
+      const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
+      try {
+        await sendWhatsAppMessage(o.phone, msg, tenant);
+        pushHistory(o.phone, "assistant", msg, tenant);
+        markCartReminded(o.id);
+        logEvent("cart_reminded", { tenantId: o.tenantId, phone: o.phone, orderId: o.id, total: o.total }).catch(() => {});
+        sent.push(o.id);
+      } catch (e) {
+        console.error(`  ❌ فشل تذكير السلة ${o.id}: ${e.message}`);
+      }
+    }
+    res.json({ ok: true, due: due.length, sent });
   });
 
   // ── Inbox: قائمة المحادثات + محادثة واحدة ──
@@ -626,6 +666,7 @@ export function createApp() {
     const { tenantId, phone, enabled, by } = req.body || {};
     if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
     setTakeover(tenantId, phone, !!enabled, by);
+    logEvent(!!enabled ? "takeover" : "handover", { tenantId, phone, by }).catch(() => {});
     res.json({ ok: true, takeover: isTakeover(tenantId, phone) });
   });
 
@@ -834,6 +875,7 @@ load();
                 result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
                 pushHistory(from, "user", text, tenant);
                 pushHistory(from, "assistant", reply, tenant);
+                logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: booking.id, service, slot }).catch(() => {});
                 try {
                   await sendWhatsAppMessage(from, reply, tenant);
                 } catch (e) {
@@ -850,6 +892,7 @@ load();
 
             console.log(`  🤖 ${tenant?.botName || "كريم"} -> intent=${result.intent} transfer=${result.transfer_to_human}`);
             console.log(`  💬 الرد: "${result.reply}"`);
+            logEvent("message", { tenantId: tenant?.id, phone: from, intent: result.intent, transfer: result.transfer_to_human, text: text.slice(0, 200) }).catch(() => {});
 
             if (result.transfer_to_human) {
               console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
@@ -871,6 +914,7 @@ load();
                 const baseUrl = process.env.PUBLIC_BASE_URL || `https://kareem-whatsapp-agent.onrender.com`;
                 const { url: payUrl, mock } = await createPaymentLink(order, baseUrl);
                 result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}${mock ? " (تجريبي — فعّل STRIPE_SECRET_KEY للدفع الحقيقي)" : ""}`;
+                logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});
                 console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
               } catch (e) {
                 console.error(`  ❌ خطأ إنشاء الطلب: ${e.message}`);
@@ -930,11 +974,12 @@ load();
 // ──────────────────────────────────────────────
 export function startServer(port = PORT) {
   const app = createApp();
-  // مجدول تذكير تلقائي كل 5 دقائق (للمواعيد المؤكدة غير المذكّرة)
+  // مجدول تلقائي: تذكير مواعيد + سلة مهجورة
   const remindEveryMs = Number(process.env.REMIND_EVERY_MS || 5 * 60 * 1000);
   if (!global.__remindTimer) {
     global.__remindTimer = setInterval(async () => {
       try {
+        // 1) تذكير مواعيد
         const due = dueReminders({ afterMinutes: Number(process.env.REMIND_AFTER_MIN || 60) });
         for (const b of due.slice(0, 20)) {
           const tenant = getTenantFull(b.tenantId);
@@ -943,9 +988,25 @@ export function startServer(port = PORT) {
           try {
             await sendWhatsAppMessage(b.phone, msg, tenant);
             markReminded(b.id);
+            logEvent("booking_reminded", { tenantId: b.tenantId, phone: b.phone, bookingId: b.id }).catch(() => {});
             console.log(`  ⏰ تذكير تلقائي ${b.id} -> ${b.phone}`);
           } catch (e) {
             console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
+          }
+        }
+        // 2) سلة مهجورة (طلبات pending بدون دفع)
+        const carts = dueCartReminders({ afterMinutes: Number(process.env.CART_AFTER_MIN || 60) });
+        for (const o of carts.slice(0, 20)) {
+          const tenant = getTenantFull(o.tenantId);
+          if (!tenant) continue;
+          const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
+          try {
+            await sendWhatsAppMessage(o.phone, msg, tenant);
+            markCartReminded(o.id);
+            logEvent("cart_reminded", { tenantId: o.tenantId, phone: o.phone, orderId: o.id, total: o.total }).catch(() => {});
+            console.log(`  🛒 سلة مهجورة ${o.id} -> ${o.phone}`);
+          } catch (e) {
+            console.error(`  ❌ فشل تذكير السلة ${o.id}: ${e.message}`);
           }
         }
       } catch (e) {

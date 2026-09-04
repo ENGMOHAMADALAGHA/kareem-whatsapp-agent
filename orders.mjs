@@ -49,6 +49,25 @@ export function markOrderPaid(id) {
   return o;
 }
 
+// سلة مهجورة: طلبات pending بدون دفع وبدون تذكير ومر عليها N دقيقة
+export function dueCartReminders({ afterMinutes = 60 } = {}) {
+  const now = Date.now();
+  return load().filter((o) => {
+    if (o.status !== "pending" || o.cartRemindedAt) return false;
+    const created = new Date(o.createdAt).getTime();
+    return now - created >= afterMinutes * 60 * 1000;
+  });
+}
+
+export function markCartReminded(id) {
+  const all = load();
+  const o = all.find((x) => x.id === id);
+  if (!o) return null;
+  o.cartRemindedAt = new Date().toISOString();
+  save(all);
+  return o;
+}
+
 function setOrderUrl(id, url) {
   const all = load();
   const o = all.find((x) => x.id === id);
