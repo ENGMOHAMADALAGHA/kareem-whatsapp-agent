@@ -16,6 +16,9 @@ import {
   listAppointments,
   getBookingState,
   setBookingState,
+  dueReminders,
+  markReminded,
+  cancelAppointment,
 } from "./bookings.mjs";
 import { downloadWhatsAppMedia, transcribeAudio } from "./voice.mjs";
 import {
@@ -247,6 +250,41 @@ export function clearMemory(phone, tenantId) {
 
 export function getMemoryStats() {
   return { conversations: conversations.size, maxHistory: MAX_HISTORY };
+}
+
+// ── Inbox: عرض المحادثات + Takeover (إيقاف البوت مؤقتاً لتدخل بشري) ──
+const takeoverMap = new Map(); // key tenant::phone -> {by, at}
+export function setTakeover(tenantId, phone, enabled, by = "admin") {
+  const key = memoryKey(tenantId, phone);
+  if (enabled) takeoverMap.set(key, { by, at: Date.now() });
+  else takeoverMap.delete(key);
+}
+export function isTakeover(tenantId, phone) {
+  return takeoverMap.has(memoryKey(tenantId, phone));
+}
+export function listInbox(tenantFilter) {
+  const out = [];
+  for (const [key, entry] of conversations.entries()) {
+    const sep = key.indexOf("::");
+    const tenantId = sep > 0 ? key.slice(0, sep) : "kareem-sport";
+    const phone = sep > 0 ? key.slice(sep + 2) : key;
+    if (tenantFilter && tenantId !== tenantFilter) continue;
+    const last = entry.messages[entry.messages.length - 1];
+    out.push({
+      tenantId,
+      phone,
+      count: entry.messages.length,
+      updatedAt: entry.updatedAt,
+      takeover: takeoverMap.has(key),
+      lastMessage: last ? { role: last.role, text: last.text.slice(0, 120) } : null,
+    });
+  }
+  out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out;
+}
+export function getConversation(tenantId, phone) {
+  const entry = conversations.get(memoryKey(tenantId, phone));
+  return entry ? entry.messages : [];
 }
 
 // ──────────────────────────────────────────────
@@ -570,6 +608,87 @@ export function createApp() {
     res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);
   });
 
+  // ── Inbox: قائمة المحادثات + محادثة واحدة ──
+  app.get("/admin/inbox", (req, res) => {
+    res.json({ count: listInbox(req.query.tenant).length, inbox: listInbox(req.query.tenant) });
+  });
+  app.get("/admin/inbox/:tenantId/:phone", (req, res) => {
+    const { tenantId, phone } = req.params;
+    res.json({
+      tenantId, phone,
+      takeover: isTakeover(tenantId, phone),
+      messages: getConversation(tenantId, phone),
+    });
+  });
+
+  // ── Takeover: إيقاف/تشغيل البوت لمحادثة ──
+  app.post("/admin/takeover", (req, res) => {
+    const { tenantId, phone, enabled, by } = req.body || {};
+    if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
+    setTakeover(tenantId, phone, !!enabled, by);
+    res.json({ ok: true, takeover: isTakeover(tenantId, phone) });
+  });
+
+  // ── إرسال يدوي من الموظف (مع حفظ في الذاكرة) ──
+  app.post("/admin/send", async (req, res) => {
+    const { tenantId, phone, text } = req.body || {};
+    if (!tenantId || !phone || !text) return res.status(400).json({ ok: false, error: "tenantId و phone و text مطلوبة" });
+    const tenant = getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    try {
+      const r = await sendWhatsAppMessage(phone, text, tenant);
+      pushHistory(phone, "assistant", text, tenant);
+      res.json({ ok: true, result: r });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // ── صفحة Inbox بسيطة (HTML) ──
+  app.get("/admin/inbox.html", (req, res) => {
+    res.send(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>Inbox</title>
+<style>body{font-family:system-ui;margin:20px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:8px}.u{color:#0a7}.a{color:#06c}</style></head><body>
+<h2>📥 Inbox — المحادثات الحية</h2>
+<p>API: <code>/admin/inbox?tenant=ID</code> | محادثة: <code>/admin/inbox/:tenant/:phone</code></p>
+<table id="t"><tr><th>البوت</th><th>الرقم</th><th>takeover</th><th>آخر رسالة</th><th>إجراء</th></tr></table>
+<script>
+async function load(){ const q=new URLSearchParams(location.search); const r=await fetch('/admin/inbox?tenant='+(q.get('tenant')||'')); const j=await r.json();
+const t=document.getElementById('t');
+j.inbox.forEach(c=>{ const tr=document.createElement('tr');
+tr.innerHTML='<td>'+c.tenantId+'</td><td>'+c.phone+'</td><td>'+(c.takeover?'⏸️':'✅')+'</td><td>'+(c.lastMessage?c.lastMessage.text:'')+'</td>';
+const b=document.createElement('button'); b.textContent=c.takeover?'تشغيل البوت':'إيقاف للموظف';
+b.onclick=async()=>{ await fetch('/admin/takeover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenantId:c.tenantId,phone:c.phone,enabled:!c.takeover})}); load(); };
+const td=document.createElement('td'); td.appendChild(b); tr.appendChild(td); t.appendChild(tr); }); }
+load();
+</script></body></html>`);
+  });
+
+  // ── تذكير المواعيد: تشغيل يدوي + إلغاء حجز ──
+  app.post("/admin/remind-run", async (req, res) => {
+    const afterMinutes = Number(req.body?.afterMinutes ?? 1);
+    const due = dueReminders({ afterMinutes });
+    const sent = [];
+    for (const b of due) {
+      const tenant = getTenantFull(b.tenantId);
+      if (!tenant) continue;
+      const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
+      try {
+        await sendWhatsAppMessage(b.phone, msg, tenant);
+        pushHistory(b.phone, "assistant", msg, tenant);
+        markReminded(b.id);
+        sent.push(b.id);
+      } catch (e) {
+        console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
+      }
+    }
+    res.json({ ok: true, due: due.length, sent });
+  });
+  app.post("/admin/appointments/:id/cancel", (req, res) => {
+    const b = cancelAppointment(req.params.id);
+    if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
+    res.json({ ok: true, booking: b });
+  });
+
   // ── POST /webhook : استقبال الرسائل ──
   app.post("/webhook", async (req, res) => {
     try {
@@ -650,6 +769,14 @@ export function createApp() {
             console.log(`  🏢 tenant=${tenant?.id} | بوت=${tenant?.botName}`);
             console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"${buttonId ? ` [btn=${buttonId}]` : ""}`);
             console.log(`  🧠 الذاكرة: ${getHistory(from, tenant).length} رسائل سابقة`);
+
+            // —— Takeover: إذا الموظف مستلم المحادثة، لا يرد البوت ——
+            if (isTakeover(tenant?.id, from)) {
+              pushHistory(from, "user", text, tenant);
+              console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
 
             // —— تدفق الحجز (للعيادات) قبل الـ AI ——
             const wantsBooking = tenant?.features?.booking && /(حجز|موعد|احجز|book|appointment)/i.test(text + " " + (buttonId || ""));
@@ -803,6 +930,30 @@ export function createApp() {
 // ──────────────────────────────────────────────
 export function startServer(port = PORT) {
   const app = createApp();
+  // مجدول تذكير تلقائي كل 5 دقائق (للمواعيد المؤكدة غير المذكّرة)
+  const remindEveryMs = Number(process.env.REMIND_EVERY_MS || 5 * 60 * 1000);
+  if (!global.__remindTimer) {
+    global.__remindTimer = setInterval(async () => {
+      try {
+        const due = dueReminders({ afterMinutes: Number(process.env.REMIND_AFTER_MIN || 60) });
+        for (const b of due.slice(0, 20)) {
+          const tenant = getTenantFull(b.tenantId);
+          if (!tenant) continue;
+          const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}.`;
+          try {
+            await sendWhatsAppMessage(b.phone, msg, tenant);
+            markReminded(b.id);
+            console.log(`  ⏰ تذكير تلقائي ${b.id} -> ${b.phone}`);
+          } catch (e) {
+            console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
+          }
+        }
+      } catch (e) {
+        console.error(`  ❌ خطأ المجدول: ${e.message}`);
+      }
+    }, remindEveryMs);
+    if (global.__remindTimer.unref) global.__remindTimer.unref();
+  }
   const server = app.listen(port, () => {
     console.log("\n" + "═".repeat(60));
     console.log("  🤖  كريم - AI Sales Agent | سيرفر واتساب Webhook");

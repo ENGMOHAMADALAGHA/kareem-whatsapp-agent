@@ -32,6 +32,34 @@ export function listAppointments(tenantId) {
   return load().filter((b) => !tenantId || b.tenantId === tenantId);
 }
 
+// تذكير: يرجع الحجوزات التي تحتاج تذكير (لم يُرسل لها remindedAt ومر عليها N دقائق للتجربة، أو موعدها قريب)
+export function dueReminders({ afterMinutes = 1 } = {}) {
+  const now = Date.now();
+  return load().filter((b) => {
+    if (b.status !== "confirmed" || b.remindedAt) return false;
+    const created = new Date(b.createdAt).getTime();
+    return now - created >= afterMinutes * 60 * 1000;
+  });
+}
+
+export function markReminded(id) {
+  const all = load();
+  const b = all.find((x) => x.id === id);
+  if (!b) return null;
+  b.remindedAt = new Date().toISOString();
+  save(all);
+  return b;
+}
+
+export function cancelAppointment(id) {
+  const all = load();
+  const b = all.find((x) => x.id === id);
+  if (!b) return null;
+  b.status = "canceled";
+  save(all);
+  return b;
+}
+
 // حالة الحجز المؤقتة في الذاكرة (لكل tenant::phone)
 const states = new Map();
 export function getBookingState(tenantId, phone) {
