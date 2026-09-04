@@ -31,6 +31,14 @@ import {
   markCartReminded,
 } from "./orders.mjs";
 import { logEvent, listEvents, toCSV } from "./crm.mjs";
+import {
+  saveBroadcast,
+  listBroadcasts,
+  requestCsat,
+  hasPendingCsat,
+  saveRating,
+  csatStats,
+} from "./engage.mjs";
 
 dotenv.config();
 
@@ -601,15 +609,76 @@ export function createApp() {
   });
 
   // صفحة دفع تجريبية (بدون Stripe تعرض زر تأكيد يحفظ paid)
-  app.get("/pay/:orderId", (req, res) => {
+  app.get("/pay/:orderId", async (req, res) => {
     const order = getOrder(req.params.orderId);
     if (!order) return res.status(404).send("الطلب غير موجود");
     if (req.query.paid === "1") {
       markOrderPaid(order.id);
       logEvent("order_paid", { tenantId: order.tenantId, phone: order.phone, orderId: order.id, total: order.total }).catch(() => {});
+      // طلب تقييم تلقائي بعد الدفع
+      const tenant = getTenantFull(order.tenantId);
+      if (tenant) {
+        const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
+        requestCsat(order.tenantId, order.phone, order.id);
+        try {
+          await sendWhatsAppMessage(order.phone, msg, tenant);
+          pushHistory(order.phone, "assistant", msg, tenant);
+        } catch (e) {
+          console.error(`  ❌ فشل إرسال CSAT: ${e.message}`);
+        }
+      }
       return res.send(`<h2>تم الدفع ✅ ${order.id} - $${order.total}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
     }
     res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);
+  });
+
+  // ── Broadcast: إرسال جماعي ──
+  app.post("/admin/broadcast", async (req, res) => {
+    const { tenantId, text, phones } = req.body || {};
+    if (!tenantId || !text || !Array.isArray(phones) || !phones.length) {
+      return res.status(400).json({ ok: false, error: "tenantId و text و phones[] مطلوبة" });
+    }
+    if (phones.length > 50) return res.status(400).json({ ok: false, error: "الحد الأقصى 50 رقم لكل بث" });
+    const tenant = getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const results = [];
+    for (const phone of phones) {
+      try {
+        await sendWhatsAppMessage(phone, text, tenant);
+        pushHistory(phone, "assistant", text, tenant);
+        results.push({ phone, ok: true });
+      } catch (e) {
+        results.push({ phone, ok: false, error: e.message });
+      }
+      await new Promise((r) => setTimeout(r, 800)); // تجنب rate limit
+    }
+    const rec = saveBroadcast({ tenantId, text, phones, results });
+    logEvent("broadcast", { tenantId, count: phones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id }).catch(() => {});
+    res.json({ ok: true, broadcast: rec });
+  });
+  app.get("/admin/broadcasts", (req, res) => {
+    const all = listBroadcasts(req.query.tenant);
+    res.json({ count: all.length, broadcasts: all });
+  });
+
+  // ── CSAT: طلب تقييم + عرض النتائج ──
+  app.post("/admin/csat-request", async (req, res) => {
+    const { tenantId, phone } = req.body || {};
+    if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
+    const tenant = getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const msg = `شكراً لتعاملك معنا يا غالي! 🙏 قيّم تجربتك من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
+    requestCsat(tenantId, phone, null);
+    try {
+      await sendWhatsAppMessage(phone, msg, tenant);
+      pushHistory(phone, "assistant", msg, tenant);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  app.get("/admin/csat", (req, res) => {
+    res.json({ ok: true, ...csatStats(req.query.tenant) });
   });
 
   // ── CRM: سجل الأحداث + تصدير CSV ──
@@ -817,6 +886,29 @@ load();
               console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
+            }
+
+            // —— CSAT: إذا الرد رقم 1-5 وكان في طلب تقييم معلق ——
+            if (/^[1-5]$/.test(text.trim())) {
+              const pending = hasPendingCsat(tenant?.id, from);
+              if (pending) {
+                const score = Number(text.trim());
+                const rating = saveRating({ tenantId: tenant.id, phone: from, score, refId: pending.refId });
+                const reply = score >= 4
+                  ? `شكراً يا بطل! ⭐ تقييمك ${score}/5 أسعدنا. كريم معك خطوة بخطوة 👟`
+                  : `شكراً لصراحتك يا غالي 🙏 تقييمك ${score}/5 وصلنا ورح نشتغل نحسّن. تحب يحكي معك موظف؟`;
+                pushHistory(from, "user", text, tenant);
+                pushHistory(from, "assistant", reply, tenant);
+                logEvent("csat", { tenantId: tenant.id, phone: from, score, refId: pending.refId }).catch(() => {});
+                try {
+                  await sendWhatsAppMessage(from, reply, tenant);
+                } catch (e) {
+                  console.error(`  ❌ فشل إرسال رد التقييم: ${e.message}`);
+                }
+                console.log(`  ⭐ تقييم ${rating.id} ${tenant.id} ${from} = ${score}`);
+                console.log(`${"─".repeat(60)}\n`);
+                continue;
+              }
             }
 
             // —— تدفق الحجز (للعيادات) قبل الـ AI ——
