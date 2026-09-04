@@ -11,6 +11,12 @@ import {
   buildSystemPrompt,
   memoryKey,
 } from "./tenants.mjs";
+import {
+  bookAppointment,
+  listAppointments,
+  getBookingState,
+  setBookingState,
+} from "./bookings.mjs";
 
 dotenv.config();
 
@@ -70,8 +76,13 @@ const SYSTEM_PROMPT = `
 {
   "reply": "نص الرد بنفس لغة العميل",
   "transfer_to_human": false,
-  "intent": "استفسار | شراء | اعتراض_على_السعر | تصعيد"
+  "intent": "استفسار | شراء | اعتراض_على_السعر | تصعيد | حجز_موعد",
+  "buttons": [{"id": "buy_shoes", "title": "👟 الحذاء $50"}],
+  "image": "رابط صورة المنتج عند أول عرض له فقط (اختياري)"
 }
+- buttons: اختياري (حتى 3 أزرار). استخدمه عند عرض المنتجات: buy_shoes / buy_belt / bundle / booking / human
+- image: اختياري، رابط صورة المنتج عند أول مرة تعرضه فقط
+- حجز_موعد: استخدمه فقط إذا طلب العميل حجز/موعد (للعيادات)
 
 # أنواع intent:
 - "استفسار": سؤال عام عن المنتجات/الأسعار/التوصيل
@@ -302,12 +313,16 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
       throw new Error("هيكل JSON غير متطابق");
     }
 
-    // التحقق من intent المسموح
-    const allowedIntents = ["استفسار", "شراء", "اعتراض_على_السعر", "تصعيد"];
+    // التحقق من intent المسموح (أضفنا حجز_موعد للعيادات)
+    const allowedIntents = ["استفسار", "شراء", "اعتراض_على_السعر", "تصعيد", "حجز_موعد"];
     if (!allowedIntents.includes(parsed.intent)) {
       console.warn(`  ⚠️  تحذير: intent غير متوقع "${parsed.intent}" - تم التصحيح إلى "استفسار"`);
       parsed.intent = "استفسار";
     }
+    // حقول اختيارية من الـ AI: buttons / image / action
+    if (parsed.buttons && !Array.isArray(parsed.buttons)) delete parsed.buttons;
+    if (parsed.buttons) parsed.buttons = parsed.buttons.slice(0, 3);
+    if (parsed.image && typeof parsed.image !== "string") delete parsed.image;
 
     // تحذير إذا اقترح منتجات خارج القائمة
     const forbiddenPattern = /(ساعة|قميص|تيشيرت|نظارة|كرة|مضرب|دراجة)/i;
@@ -377,6 +392,69 @@ export async function sendWhatsAppMessage(to, text, tenantInput = null) {
   }
 }
 
+// إرسال generic (نص / أزرار / صورة) - نفس التوكن لكل بوت
+async function sendPayload(to, payload, tenantInput = null) {
+  const tenant = tenantOf(tenantInput);
+  const token = tenant?.whatsapp_token || WHATSAPP_TOKEN;
+  const phoneId = tenant?.phone_number_id || WHATSAPP_PHONE_ID;
+
+  if (!token || token === "DEMO_WHATSAPP_TOKEN" || !phoneId || phoneId === "DEMO_PHONE_ID") {
+    console.log(`  📤 [محاكاة إرسال ${payload.type}] إلى ${to}: ${JSON.stringify(payload).slice(0, 200)}`);
+    return { simulated: true, to, payload };
+  }
+  const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", to, ...payload }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  console.log(`  ✅ تم الإرسال (${payload.type}) إلى ${to} | ID: ${data.messages?.[0]?.id || "N/A"}`);
+  return data;
+}
+
+export async function sendButtons(to, bodyText, buttons, tenantInput = null) {
+  const btns = (buttons || []).slice(0, 3).map((b, i) => ({
+    type: "reply",
+    reply: { id: b.id || `btn_${i}`, title: (b.title || `خيار ${i + 1}`).slice(0, 20) },
+  }));
+  if (!btns.length) return sendWhatsAppMessage(to, bodyText, tenantInput);
+  return sendPayload(to, {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: bodyText.slice(0, 1024) },
+      action: { buttons: btns },
+    },
+  }, tenantInput);
+}
+
+export async function sendImage(to, link, caption = "", tenantInput = null) {
+  return sendPayload(to, {
+    type: "image",
+    image: { link, caption: caption.slice(0, 1024) },
+  }, tenantInput);
+}
+
+// أزرار افتراضية لكل tenant من منتجاته
+export function defaultButtonsFor(tenant) {
+  const t = tenantOf(tenant);
+  if (t?.id === "kareem-sport") {
+    return [
+      { id: "buy_shoes", title: "👟 الحذاء $50" },
+      { id: "buy_belt", title: "💪 الحزام $20" },
+      { id: "bundle", title: "🎁 العرض $70" },
+    ];
+  }
+  const btns = (t.products || []).slice(0, 2).map((p) => ({
+    id: p.buttonId || p.name,
+    title: `${p.name} $${p.price}`.slice(0, 20),
+  }));
+  if (t?.features?.booking) btns.push({ id: "booking", title: "📅 احجز موعد" });
+  return btns.slice(0, 3);
+}
+
 // ──────────────────────────────────────────────
 // 7. إنشاء تطبيق Express
 // ──────────────────────────────────────────────
@@ -443,6 +521,11 @@ export function createApp() {
     res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token } });
   });
 
+  app.get("/admin/appointments", (req, res) => {
+    const { tenant } = req.query;
+    res.json({ count: listAppointments(tenant).length, appointments: listAppointments(tenant) });
+  });
+
   // ── POST /webhook : استقبال الرسائل ──
   app.post("/webhook", async (req, res) => {
     try {
@@ -478,9 +561,16 @@ export function createApp() {
           for (const msg of messages) {
             hasMessage = true;
 
-            // استخراج رقم العميل ونص الرسالة
+            // استخراج رقم العميل ونص الرسالة (يدعم الأزرار التفاعلية)
             const from = msg.from; // رقم العميل
-            const text = msg.text?.body || msg.button?.text || "";
+            const text =
+              msg.text?.body ||
+              msg.button?.text ||
+              msg.interactive?.button_reply?.title ||
+              msg.interactive?.button_reply?.id ||
+              msg.interactive?.list_reply?.title ||
+              "";
+            const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || null;
             const name = contacts.find((c) => c.wa_id === from)?.profile?.name || from;
 
             if (!text) {
@@ -490,23 +580,105 @@ export function createApp() {
 
             console.log(`\n${"─".repeat(60)}`);
             console.log(`  🏢 tenant=${tenant?.id} | بوت=${tenant?.botName}`);
-            console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"`);
+            console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"${buttonId ? ` [btn=${buttonId}]` : ""}`);
             console.log(`  🧠 الذاكرة: ${getHistory(from, tenant).length} رسائل سابقة`);
 
-            // إرسال إلى الذكاء الاصطناعي مع ذاكرة المحادثة المعزولة
-            const result = await processCustomerMessage(text, from, tenant);
+            // —— تدفق الحجز (للعيادات) قبل الـ AI ——
+            const wantsBooking = tenant?.features?.booking && /(حجز|موعد|احجز|book|appointment)/i.test(text + " " + (buttonId || ""));
+            const bookingState = getBookingState(tenant?.id, from);
+            let result = null;
+            let handled = false;
+
+            // 1) ضغطة زر منتج لكريم: اعرض الصورة + أكمل شراء
+            if (tenant?.id === "kareem-sport" && buttonId && /^(buy_shoes|buy_belt|bundle)$/.test(buttonId)) {
+              const map = {
+                buy_shoes: "أريد شراء حذاء الركض",
+                buy_belt: "أريد شراء حزام الظهر",
+                bundle: "أريد حزام الظهر والحذاء معاً",
+              };
+              result = await processCustomerMessage(map[buttonId], from, tenant);
+              const prod = buttonId === "buy_shoes" ? tenant.products[0] : buttonId === "buy_belt" ? tenant.products[1] : null;
+              try {
+                if (prod?.image) await sendImage(from, prod.image, `${prod.name} - $${prod.price}`, tenant);
+                await sendWhatsAppMessage(from, result.reply, tenant);
+              } catch (sendErr) {
+                console.error(`  ❌ فشل الإرسال: ${sendErr.message}`);
+              }
+              console.log(`  🤖 ${tenant?.botName} -> intent=${result.intent} (زر ${buttonId})`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 2) بدء الحجز
+            if (wantsBooking && !bookingState) {
+              const slots = (tenant.features.bookingSlots || []).join("، ");
+              setBookingState(tenant.id, from, { step: "slot" });
+              const reply = `تمام يا غالي 😊 احجز موعدك في ${tenant.name}. أوقاتنا: ${tenant.features.workingHours || ""}. اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00) واسم الخدمة.`;
+              result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
+              pushHistory(from, "user", text, tenant);
+              pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+              }
+              console.log(`  📅 بدء حجز ${tenant.id} للعميل ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 3) استكمال الحجز (اختار وقت)
+            if (bookingState?.step === "slot") {
+              const slotMatch = text.match(/(\d{1,2}:\d{2})/) || (buttonId?.startsWith("slot_") ? [null, buttonId.replace("slot_", "")] : null);
+              if (slotMatch) {
+                const slot = slotMatch[1];
+                const service = (tenant.products || [])[0]?.name || "موعد";
+                const booking = bookAppointment({ tenantId: tenant.id, phone: from, name, service, day: "أقرب يوم متاح", slot });
+                setBookingState(tenant.id, from, null);
+                const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
+                result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
+                pushHistory(from, "user", text, tenant);
+                pushHistory(from, "assistant", reply, tenant);
+                try {
+                  await sendWhatsAppMessage(from, reply, tenant);
+                } catch (e) {
+                  console.error(`  ❌ فشل الإرسال: ${e.message}`);
+                }
+                console.log(`  📅 تأكيد حجز ${booking.id} ${tenant.id} ${from} ${slot}`);
+                console.log(`${"─".repeat(60)}\n`);
+                continue;
+              }
+            }
+
+            // —— المسار العادي: AI ——
+            result = await processCustomerMessage(text, from, tenant);
 
             console.log(`  🤖 ${tenant?.botName || "كريم"} -> intent=${result.intent} transfer=${result.transfer_to_human}`);
             console.log(`  💬 الرد: "${result.reply}"`);
-            console.log(`  📦 JSON: ${JSON.stringify(result)}`);
 
             if (result.transfer_to_human) {
               console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
             }
 
-            // إرسال الرد عبر WhatsApp API الخاص بهذا البوت
+            // إرسال ذكي: صورة + نص + أزرار (حسب ما رجّع الـ AI)
             try {
-              await sendWhatsAppMessage(from, result.reply, tenant);
+              if (result.image && tenant?.features?.images) {
+                await sendImage(from, result.image, result.reply.slice(0, 200), tenant).catch(() => {});
+                // مع الصورة نرسل الأزرار لو وجدت
+                const btns = result.buttons?.length ? result.buttons : defaultButtonsFor(tenant);
+                if (tenant?.features?.buttons && btns?.length) {
+                  await sendButtons(from, "شو بتحب تعمل هلا؟", btns, tenant).catch(() => {});
+                }
+              } else if (result.buttons?.length && tenant?.features?.buttons) {
+                await sendButtons(from, result.reply, result.buttons, tenant);
+              } else {
+                // أول عرض للمنتجات: أرفق أزرار تلقائياً (كريم فقط، أول رسالتين)
+                const histLen = getHistory(from, tenant).length;
+                await sendWhatsAppMessage(from, result.reply, tenant);
+                if (tenant?.id === "kareem-sport" && histLen <= 2 && /حذاء|حزام|Bundle|لدينا/i.test(result.reply)) {
+                  await sendButtons(from, "اختار بسرعة 👇", defaultButtonsFor(tenant), tenant).catch(() => {});
+                }
+              }
             } catch (sendErr) {
               console.error(`  ❌ فشل إرسال الرد للعميل ${from}: ${sendErr.message}`);
             }
