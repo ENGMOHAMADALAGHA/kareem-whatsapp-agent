@@ -1,0 +1,36 @@
+{
+  "tenants": [
+    {
+      "id": "kareem-sport",
+      "name": "كريم - متجر مستلزمات رياضية",
+      "botName": "كريم",
+      "enabled": true,
+      "phone_number_id": null,
+      "verify_token": null,
+      "whatsapp_token_env": "WHATSAPP_TOKEN",
+      "isDefault": true,
+      "businessType": "sport-store",
+      "products": [
+        {
+          "name": "حذاء ركض احترافي",
+          "price": 50
+        },
+        {
+          "name": "حزام دعم الظهر",
+          "price": 20
+        }
+      ],
+      "deliveryFee": 5,
+      "bundleOffer": {
+        "enabled": true,
+        "price": 70,
+        "description": "الحذاء + الحزام بـ $70 شامل التوصيل (توفير $5)"
+      },
+      "tone": "أردنية عامية خفيفة + ودود + يا هلا والله يا بطل + كريم معك خطوة بخطوة 👟",
+      "languages": [
+        "ar",
+        "en"
+      ]
+    }
+  ]
+}

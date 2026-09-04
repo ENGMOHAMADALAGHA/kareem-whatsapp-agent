@@ -3,6 +3,14 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import express from "express";
 import { fileURLToPath } from "node:url";
+import {
+  resolveTenant,
+  getTenantFull,
+  listTenants,
+  addTenant,
+  buildSystemPrompt,
+  memoryKey,
+} from "./tenants.mjs";
 
 dotenv.config();
 
@@ -169,31 +177,53 @@ const conversations = new Map(); // phone -> [{role, text, timestamp}]
 const MAX_HISTORY = 10; // آخر 10 رسائل (5 تبادلات)
 const MEMORY_TTL_MS = 1000 * 60 * 60 * 6; // 6 ساعات
 
-function getHistory(phone) {
-  const entry = conversations.get(phone);
+function tenantOf(input) {
+  // input قد يكون id نصي أو كائن tenant كامل
+  if (!input) return resolveTenant({});
+  if (typeof input === "string") return getTenantFull(input) || resolveTenant({});
+  return input;
+}
+
+function keyOf(phone, tenant) {
+  const tid = tenant?.id || "kareem-sport";
+  // عزل تام: tenant + phone (نفس الرقم عند بوتين = ذاكرتين منفصلتين)
+  return memoryKey(tid, phone);
+}
+
+function getHistory(phone, tenantInput) {
+  const tenant = tenantOf(tenantInput);
+  const key = keyOf(phone, tenant);
+  const entry = conversations.get(key);
   if (!entry) return [];
   // تنظيف المنتهية
   if (Date.now() - entry.updatedAt > MEMORY_TTL_MS) {
-    conversations.delete(phone);
+    conversations.delete(key);
     return [];
   }
   return entry.messages;
 }
 
-function pushHistory(phone, role, text) {
-  let entry = conversations.get(phone);
+function pushHistory(phone, role, text, tenantInput) {
+  const tenant = tenantOf(tenantInput);
+  const key = keyOf(phone, tenant);
+  let entry = conversations.get(key);
   if (!entry) {
     entry = { messages: [], updatedAt: Date.now() };
-    conversations.set(phone, entry);
+    conversations.set(key, entry);
   }
   entry.messages.push({ role, text, ts: Date.now() });
   if (entry.messages.length > MAX_HISTORY) entry.messages.shift();
   entry.updatedAt = Date.now();
 }
 
-export function clearMemory(phone) {
-  if (phone) conversations.delete(phone);
-  else conversations.clear();
+export function clearMemory(phone, tenantId) {
+  if (phone && tenantId) conversations.delete(memoryKey(tenantId, phone));
+  else if (phone) {
+    // امسح كل مفاتيح هذا الرقم عبر كل البوتات
+    for (const k of [...conversations.keys()]) {
+      if (k === phone || k.endsWith(`::${phone}`)) conversations.delete(k);
+    }
+  } else conversations.clear();
 }
 
 export function getMemoryStats() {
@@ -203,22 +233,27 @@ export function getMemoryStats() {
 // ──────────────────────────────────────────────
 // 6. الدالة الأساسية: getKareemReply (مع ذاكرة)
 // ──────────────────────────────────────────────
-export async function getKareemReply(userMessage, phone = "default") {
+export async function getKareemReply(userMessage, phone = "default", tenantInput = null) {
+  const tenant = tenantOf(tenantInput);
+  // كريم الحالي يبقى كما هو؛ أي tenant جديد يستخدم prompt مبني من إعداداته
+  const prompt = tenant?.id === "kareem-sport" ? SYSTEM_PROMPT : buildSystemPrompt(tenant);
+  const botLabel = tenant?.botName || "كريم";
+
   // وضع DEMO بدون استهلاك API - مع ذاكرة بسيطة
   if (isDemoMode) {
     await new Promise((r) => setTimeout(r, 300));
     const result = mockReply(userMessage);
-    // حفظ في الذاكرة حتى في وضع DEMO
-    pushHistory(phone, "user", userMessage);
-    pushHistory(phone, "assistant", result.reply);
+    // حفظ في الذاكرة حتى في وضع DEMO (معزولة لكل بوت)
+    pushHistory(phone, "user", userMessage, tenant);
+    pushHistory(phone, "assistant", result.reply, tenant);
     return result;
   }
 
   try {
     let rawText = "";
-    const history = getHistory(phone);
+    const history = getHistory(phone, tenant);
     // تحويل التاريخ لنص للسياق
-    const historyContext = history.map(m => `${m.role === "user" ? "العميل" : "كريم"}: ${m.text}`).join("\n");
+    const historyContext = history.map(m => `${m.role === "user" ? "العميل" : botLabel}: ${m.text}`).join("\n");
 
     if (AI_PROVIDER === "google") {
       // نمرر التاريخ كجزء من السياق + الرسالة الحالية
@@ -233,14 +268,14 @@ export async function getKareemReply(userMessage, phone = "default") {
         model: AI_MODEL,
         contents: fullContents,
         config: {
-          systemInstruction: SYSTEM_PROMPT + (historyContext ? `\n\n# سجل المحادثة السابقة مع هذا العميل (${phone}):\n${historyContext}\n(استخدمه لتتذكر ماذا طلب العميل ولا تكرر الأسئلة)` : ""),
+          systemInstruction: prompt + (historyContext ? `\n\n# سجل المحادثة السابقة مع هذا العميل (${phone}):\n${historyContext}\n(استخدمه لتتذكر ماذا طلب العميل ولا تكرر الأسئلة)` : ""),
           responseMimeType: "application/json",
           temperature: 0.7,
         },
       });
       rawText = response.text;
     } else {
-      const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+      const messages = [{ role: "system", content: prompt }];
       if (historyContext) {
         messages.push({ role: "system", content: `سجل المحادثة السابقة مع العميل ${phone}:\n${historyContext}` });
       }
@@ -280,15 +315,15 @@ export async function getKareemReply(userMessage, phone = "default") {
       console.warn(`  ⚠️  تحذير: الرد يحتوي على منتج غير مصرح به!`);
     }
 
-    // حفظ في الذاكرة
-    pushHistory(phone, "user", userMessage);
-    pushHistory(phone, "assistant", parsed.reply);
+    // حفظ في الذاكرة (معزولة لكل بوت)
+    pushHistory(phone, "user", userMessage, tenant);
+    pushHistory(phone, "assistant", parsed.reply, tenant);
     return parsed;
   } catch (err) {
     console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
     const fallback = mockReply(userMessage);
-    pushHistory(phone, "user", userMessage);
-    pushHistory(phone, "assistant", fallback.reply);
+    pushHistory(phone, "user", userMessage, tenant);
+    pushHistory(phone, "assistant", fallback.reply, tenant);
     return fallback;
   }
 }
@@ -299,20 +334,24 @@ export const processCustomerMessage = getKareemReply;
 // ──────────────────────────────────────────────
 // 6. دالة إرسال الرد عبر WhatsApp Cloud API
 // ──────────────────────────────────────────────
-export async function sendWhatsAppMessage(to, text) {
-  if (!WHATSAPP_TOKEN || WHATSAPP_TOKEN === "DEMO_WHATSAPP_TOKEN" || !WHATSAPP_PHONE_ID || WHATSAPP_PHONE_ID === "DEMO_PHONE_ID") {
+export async function sendWhatsAppMessage(to, text, tenantInput = null) {
+  const tenant = tenantOf(tenantInput);
+  const token = tenant?.whatsapp_token || WHATSAPP_TOKEN;
+  const phoneId = tenant?.phone_number_id || WHATSAPP_PHONE_ID;
+
+  if (!token || token === "DEMO_WHATSAPP_TOKEN" || !phoneId || phoneId === "DEMO_PHONE_ID") {
     console.log(`  📤 [محاكاة إرسال] إلى ${to}: "${text}"`);
     console.log(`  💡 ضع WHATSAPP_TOKEN و WHATSAPP_PHONE_ID الحقيقيين في .env للإرسال الفعلي`);
     return { simulated: true, to, text };
   }
 
-  const url = `https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`;
+  const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`;
 
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -351,14 +390,16 @@ export function createApp() {
   // صفحة ترحيبية
   app.get("/", (req, res) => {
     res.json({
-      name: "كريم - AI Sales Agent",
+      name: "كريم - AI Sales Agent (Multi-Tenant)",
       status: "running",
       webhook: "/webhook",
+      admin: "/admin/tenants",
+      tenants: listTenants().length,
       mode: isDemoMode ? "DEMO" : AI_PROVIDER,
     });
   });
 
-  // ── GET /webhook : التحقق من ملكية الـ Webhook ──
+  // ── GET /webhook : التحقق من ملكية الـ Webhook (يدعم أكثر من بوت) ──
   app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -366,13 +407,40 @@ export function createApp() {
 
     console.log(`  🔍 GET /webhook - mode=${mode} token=${token} challenge=${challenge}`);
 
-    if (mode === "subscribe" && token === WEBHOOK_VERIFY_TOKEN) {
-      console.log("  ✅ تم التحقق من الـ Webhook بنجاح");
+    // أولاً: جرّب مطابقة tenant حسب verify_token
+    const tenant = token ? resolveTenant({ verifyToken: token }) : null;
+    const expected = tenant?.verify_token || WEBHOOK_VERIFY_TOKEN;
+
+    if (mode === "subscribe" && token === expected) {
+      console.log(`  ✅ تم التحقق من الـ Webhook بنجاح (tenant=${tenant?.id || "default"})`);
       return res.status(200).send(challenge);
     }
 
-    console.warn(`  ❌ فشل التحقق: token المتوقع="${WEBHOOK_VERIFY_TOKEN}" المستلم="${token}"`);
+    console.warn(`  ❌ فشل التحقق: token المتوقع="${expected}" المستلم="${token}"`);
     return res.sendStatus(403);
+  });
+
+  // ── لوحة تحكم البوتات (مرحلة 1: API بدون auth - تُحمى لاحقاً) ──
+  app.get("/admin/tenants", (req, res) => {
+    res.json({ count: listTenants().length, tenants: listTenants(), memory: getMemoryStats() });
+  });
+
+  app.post("/admin/tenants", (req, res) => {
+    try {
+      const created = addTenant(req.body || {});
+      console.log(`  ➕ tenant جديد: ${created.id} (${created.name})`);
+      res.status(201).json({ ok: true, tenant: created });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.get("/admin/tenants/:id", (req, res) => {
+    const t = getTenantFull(req.params.id);
+    if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    // إخفاء التوكن
+    const { whatsapp_token, ...safe } = t;
+    res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token } });
   });
 
   // ── POST /webhook : استقبال الرسائل ──
@@ -399,6 +467,14 @@ export function createApp() {
           const messages = value.messages || [];
           const contacts = value.contacts || [];
 
+          // حل الـ tenant من رقم البوت المستقبل (عزل تام)
+          const phoneNumberId = value.metadata?.phone_number_id || value.phone_number_id || null;
+          const tenant = resolveTenant({ phoneNumberId });
+          if (tenant && tenant.enabled === false) {
+            console.log(`  ⏸️ tenant موقوف: ${tenant.id} - تم تجاهل الرسالة`);
+            continue;
+          }
+
           for (const msg of messages) {
             hasMessage = true;
 
@@ -413,13 +489,14 @@ export function createApp() {
             }
 
             console.log(`\n${"─".repeat(60)}`);
+            console.log(`  🏢 tenant=${tenant?.id} | بوت=${tenant?.botName}`);
             console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"`);
-            console.log(`  🧠 الذاكرة: ${getHistory(from).length} رسائل سابقة`);
+            console.log(`  🧠 الذاكرة: ${getHistory(from, tenant).length} رسائل سابقة`);
 
-            // إرسال إلى الذكاء الاصطناعي مع ذاكرة المحادثة
-            const result = await processCustomerMessage(text, from);
+            // إرسال إلى الذكاء الاصطناعي مع ذاكرة المحادثة المعزولة
+            const result = await processCustomerMessage(text, from, tenant);
 
-            console.log(`  🤖 كريم -> intent=${result.intent} transfer=${result.transfer_to_human}`);
+            console.log(`  🤖 ${tenant?.botName || "كريم"} -> intent=${result.intent} transfer=${result.transfer_to_human}`);
             console.log(`  💬 الرد: "${result.reply}"`);
             console.log(`  📦 JSON: ${JSON.stringify(result)}`);
 
@@ -427,9 +504,9 @@ export function createApp() {
               console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
             }
 
-            // إرسال الرد عبر WhatsApp API
+            // إرسال الرد عبر WhatsApp API الخاص بهذا البوت
             try {
-              await sendWhatsAppMessage(from, result.reply);
+              await sendWhatsAppMessage(from, result.reply, tenant);
             } catch (sendErr) {
               console.error(`  ❌ فشل إرسال الرد للعميل ${from}: ${sendErr.message}`);
             }
