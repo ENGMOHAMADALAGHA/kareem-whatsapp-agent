@@ -17,6 +17,14 @@ import {
   getBookingState,
   setBookingState,
 } from "./bookings.mjs";
+import { downloadWhatsAppMedia, transcribeAudio } from "./voice.mjs";
+import {
+  createOrder,
+  getOrder,
+  listOrders,
+  markOrderPaid,
+  createPaymentLink,
+} from "./orders.mjs";
 
 dotenv.config();
 
@@ -455,6 +463,26 @@ export function defaultButtonsFor(tenant) {
   return btns.slice(0, 3);
 }
 
+// تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
+function detectTotal(tenant, userText, replyText) {
+  const all = `${userText} ${replyText}`;
+  const m = all.match(/\$(\d+(?:\.\d+)?)/g);
+  if (m && m.length) {
+    const nums = m.map((s) => parseFloat(s.replace("$", "")));
+    return Math.max(...nums);
+  }
+  const prices = (tenant.products || []).map((p) => p.price);
+  const max = Math.max(...prices, 0);
+  return max + (tenant.deliveryFee || 0);
+}
+function detectItem(tenant, userText, replyText) {
+  const all = `${userText} ${replyText}`;
+  for (const p of tenant.products || []) {
+    if (p.name && all.includes(p.name.split(" ")[0])) return p.name;
+  }
+  return (tenant.products || []).map((p) => p.name).join(" + ") || "طلب";
+}
+
 // ──────────────────────────────────────────────
 // 7. إنشاء تطبيق Express
 // ──────────────────────────────────────────────
@@ -526,6 +554,22 @@ export function createApp() {
     res.json({ count: listAppointments(tenant).length, appointments: listAppointments(tenant) });
   });
 
+  app.get("/admin/orders", (req, res) => {
+    const { tenant } = req.query;
+    res.json({ count: listOrders(tenant).length, orders: listOrders(tenant) });
+  });
+
+  // صفحة دفع تجريبية (بدون Stripe تعرض زر تأكيد يحفظ paid)
+  app.get("/pay/:orderId", (req, res) => {
+    const order = getOrder(req.params.orderId);
+    if (!order) return res.status(404).send("الطلب غير موجود");
+    if (req.query.paid === "1") {
+      markOrderPaid(order.id);
+      return res.send(`<h2>تم الدفع ✅ ${order.id} - $${order.total}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
+    }
+    res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);
+  });
+
   // ── POST /webhook : استقبال الرسائل ──
   app.post("/webhook", async (req, res) => {
     try {
@@ -561,9 +605,9 @@ export function createApp() {
           for (const msg of messages) {
             hasMessage = true;
 
-            // استخراج رقم العميل ونص الرسالة (يدعم الأزرار التفاعلية)
+            // استخراج رقم العميل ونص الرسالة (يدعم الأزرار + الفويس)
             const from = msg.from; // رقم العميل
-            const text =
+            let text =
               msg.text?.body ||
               msg.button?.text ||
               msg.interactive?.button_reply?.title ||
@@ -572,6 +616,30 @@ export function createApp() {
               "";
             const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || null;
             const name = contacts.find((c) => c.wa_id === from)?.profile?.name || from;
+
+            // —— فويس نوت: حمّله وفرّغه ثم عامله كنص ——
+            if ((msg.type === "audio" || msg.audio?.id) && !text) {
+              try {
+                const mediaId = msg.audio?.id;
+                console.log(`  🎤 فويس من ${from} (media=${mediaId}) - جاري التفريغ...`);
+                const { buffer, mimeType } = await downloadWhatsAppMedia(mediaId, tenant?.whatsapp_token || WHATSAPP_TOKEN);
+                const { text: transcript, reason } = await transcribeAudio(buffer, mimeType);
+                if (transcript) {
+                  text = transcript;
+                  console.log(`  🎤 تفريغ: "${text}"`);
+                } else {
+                  console.log(`  ⚠️ تعذر التفريغ (${reason})`);
+                  await sendWhatsAppMessage(from, "وصلني الفويس يا غالي 🎤 بس ما قدرت أفرغه، ابعتلي كتابة لو سمحت.", tenant).catch(() => {});
+                  console.log(`${"─".repeat(60)}\n`);
+                  continue;
+                }
+              } catch (e) {
+                console.error(`  ❌ خطأ الفويس: ${e.message}`);
+                await sendWhatsAppMessage(from, "ما قدرت أسمع الفويس، ابعتلي كتابة يا غالي.", tenant).catch(() => {});
+                console.log(`${"─".repeat(60)}\n`);
+                continue;
+              }
+            }
 
             if (!text) {
               console.log(`  📥 رسالة بدون نص من ${from} (type=${msg.type}) - تم تجاهلها`);
@@ -658,6 +726,28 @@ export function createApp() {
 
             if (result.transfer_to_human) {
               console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
+            }
+
+            // —— إنشاء طلب + رابط دفع عند نية الشراء (متاجر) ——
+            const wantsPay =
+              result.intent === "شراء" &&
+              (tenant?.businessType === "sport-store" || (tenant.products || []).length > 0) &&
+              !tenant?.features?.booking;
+            if (wantsPay) {
+              try {
+                const total = detectTotal(tenant, text, result.reply);
+                const order = createOrder({
+                  tenantId: tenant.id, phone: from, name,
+                  items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
+                  total, currency: "USD",
+                });
+                const baseUrl = process.env.PUBLIC_BASE_URL || `https://kareem-whatsapp-agent.onrender.com`;
+                const { url: payUrl, mock } = await createPaymentLink(order, baseUrl);
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}${mock ? " (تجريبي — فعّل STRIPE_SECRET_KEY للدفع الحقيقي)" : ""}`;
+                console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
+              } catch (e) {
+                console.error(`  ❌ خطأ إنشاء الطلب: ${e.message}`);
+              }
             }
 
             // إرسال ذكي: صورة + نص + أزرار (حسب ما رجّع الـ AI)
