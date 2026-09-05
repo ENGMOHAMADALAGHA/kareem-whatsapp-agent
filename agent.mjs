@@ -868,7 +868,7 @@ load();
                 const mediaId = msg.audio?.id;
                 console.log(`  🎤 فويس من ${from} (media=${mediaId}) - جاري التفريغ...`);
                 const { buffer, mimeType } = await downloadWhatsAppMedia(mediaId, tenant?.whatsapp_token || WHATSAPP_TOKEN);
-                const { text: transcript, reason } = await transcribeAudio(buffer, mimeType);
+                const { text: transcript, reason } = await transcribeAudio(buffer, mimeType, (tenant?.languages || ["ar", "en"]).join(","));
                 if (transcript) {
                   text = transcript;
                   console.log(`  🎤 تفريغ: "${text}"`);
