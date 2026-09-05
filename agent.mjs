@@ -542,6 +542,22 @@ export function createApp() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
+  // ── حماية /admin بـ Basic Auth (ADMIN_USER / ADMIN_PASS) ──
+  const ADMIN_USER = process.env.ADMIN_USER || "";
+  const ADMIN_PASS = process.env.ADMIN_PASS || "";
+  const adminAuth = (req, res, next) => {
+    if (!ADMIN_USER || !ADMIN_PASS) return next(); // بدون إعداد = مفتوح (للتطوير المحلي فقط)
+    const header = req.headers.authorization || "";
+    const [scheme, encoded] = header.split(" ");
+    if (scheme === "Basic" && encoded) {
+      const [u, p] = Buffer.from(encoded, "base64").toString().split(":");
+      if (u === ADMIN_USER && p === ADMIN_PASS) return next();
+    }
+    res.setHeader("WWW-Authenticate", 'Basic realm="admin"');
+    return res.status(401).json({ ok: false, error: "مطلوب تسجيل دخول المدير" });
+  };
+  app.use("/admin", adminAuth);
+
   // صفحة ترحيبية
   app.get("/", (req, res) => {
     res.json({
