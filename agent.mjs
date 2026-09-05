@@ -210,6 +210,23 @@ const conversations = new Map(); // phone -> [{role, text, timestamp}]
 const MAX_HISTORY = 10; // آخر 10 رسائل (5 تبادلات)
 const MEMORY_TTL_MS = 1000 * 60 * 60 * 6; // 6 ساعات
 
+// ── منع التكرار: Meta يعيد إرسال نفس الرسالة إذا تأخر الـ 200 ──
+const seenMessageIds = new Map(); // wamid -> timestamp
+const SEEN_TTL_MS = 1000 * 60 * 60 * 24; // 24 ساعة
+function isDuplicateMessage(msgId) {
+  if (!msgId) return false;
+  // تنظيف دوري
+  if (seenMessageIds.size > 2000) {
+    const now = Date.now();
+    for (const [k, ts] of seenMessageIds) {
+      if (now - ts > SEEN_TTL_MS) seenMessageIds.delete(k);
+    }
+  }
+  if (seenMessageIds.has(msgId)) return true;
+  seenMessageIds.set(msgId, Date.now());
+  return false;
+}
+
 function tenantOf(input) {
   // input قد يكون id نصي أو كائن tenant كامل
   if (!input) return resolveTenant({});
@@ -816,18 +833,27 @@ load();
   });
 
   // ── POST /webhook : استقبال الرسائل ──
-  app.post("/webhook", async (req, res) => {
+  // مهم: نرد 200 فوراً ثم نعالج بالخلفية — وإلا Meta يعيد الإرسال ويرد البوت مرتين
+  app.post("/webhook", (req, res) => {
+    const body = req.body;
+
+    // التحقق المبدئي من نوع الحدث
+    if (!body || body.object !== "whatsapp_business_account") {
+      console.log(`  📥 POST /webhook - object غير متوقع: ${body?.object}`);
+      return res.sendStatus(404);
+    }
+
+    // رد فوري لواتساب (يمنع إعادة الإرسال = يمنع الرد المكرر)
+    res.status(200).send("EVENT_RECEIVED");
+
+    // المعالجة بالخلفية
+    processWebhookBody(body).catch((err) => {
+      console.error(`  ❌ خطأ في معالجة Webhook: ${err.message}`, err.stack);
+    });
+  });
+
+  async function processWebhookBody(body) {
     try {
-      const body = req.body;
-
-      // التحقق المبدئي من نوع الحدث
-      if (body.object !== "whatsapp_business_account") {
-        console.log(`  📥 POST /webhook - object غير متوقع: ${body.object}`);
-        return res.sendStatus(404);
-      }
-
-      // الرد الفوري 200 لواتساب (مهم: قبل المعالجة الطويلة)
-      // لكن سنعالج الرسائل ثم نرد - واتساب يطلب 200 خلال 20ثانية
       const entries = body.entry || [];
 
       let hasMessage = false;
@@ -848,6 +874,11 @@ load();
           }
 
           for (const msg of messages) {
+            // منع التكرار: نفس الـ wamid لا يُعالج مرتين أبداً
+            if (msg.id && isDuplicateMessage(msg.id)) {
+              console.log(`  🔁 رسالة مكررة (id=${msg.id}) - تم تجاهلها`);
+              continue;
+            }
             hasMessage = true;
 
             // استخراج رقم العميل ونص الرسالة (يدعم الأزرار + الفويس)
@@ -1065,14 +1096,10 @@ load();
       if (!hasMessage) {
         console.log("  📥 POST /webhook - لا توجد رسائل جديدة (ربما statuses)");
       }
-
-      return res.status(200).send("EVENT_RECEIVED");
     } catch (err) {
-      console.error(`  ❌ خطأ في POST /webhook: ${err.message}`, err.stack);
-      // نرد 200 حتى لا يعيد واتساب المحاولة بشكل متكرر، لكن نسجل الخطأ
-      return res.status(200).send("EVENT_RECEIVED_WITH_ERROR");
+      console.error(`  ❌ خطأ في معالجة Webhook: ${err.message}`, err.stack);
     }
-  });
+  }
 
   return app;
 }
