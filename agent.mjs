@@ -31,6 +31,7 @@ import {
   markCartReminded,
 } from "./orders.mjs";
 import { logEvent, listEvents, toCSV } from "./crm.mjs";
+import { isDbEnabled } from "./db.mjs";
 import {
   saveBroadcast,
   listBroadcasts,
@@ -240,20 +241,39 @@ function keyOf(phone, tenant) {
   return memoryKey(tid, phone);
 }
 
-function getHistory(phone, tenantInput) {
+async function getHistory(phone, tenantInput) {
   const tenant = tenantOf(tenantInput);
   const key = keyOf(phone, tenant);
   const entry = conversations.get(key);
-  if (!entry) return [];
-  // تنظيف المنتهية
-  if (Date.now() - entry.updatedAt > MEMORY_TTL_MS) {
-    conversations.delete(key);
-    return [];
+  if (entry) {
+    // تنظيف المنتهية
+    if (Date.now() - entry.updatedAt > MEMORY_TTL_MS) {
+      conversations.delete(key);
+    } else {
+      return entry.messages;
+    }
   }
-  return entry.messages;
+  // عند غياب الكاش (مثلاً بعد restart) حمّل من Postgres
+  if (isDbEnabled()) {
+    try {
+      const { db } = await import("./db.mjs");
+      const r = await db().query(
+        `SELECT role, text, created_at FROM messages WHERE tenant_id=$1 AND phone=$2 ORDER BY created_at DESC LIMIT $3`,
+        [tenant?.id, phone, MAX_HISTORY]
+      );
+      const messages = r.rows.reverse().map((row) => ({
+        role: row.role, text: row.text, ts: new Date(row.created_at).getTime(),
+      }));
+      conversations.set(key, { messages, updatedAt: Date.now() });
+      return messages;
+    } catch (e) {
+      console.error(`  ⚠️ فشل تحميل الذاكرة: ${e.message}`);
+    }
+  }
+  return [];
 }
 
-function pushHistory(phone, role, text, tenantInput) {
+async function pushHistory(phone, role, text, tenantInput) {
   const tenant = tenantOf(tenantInput);
   const key = keyOf(phone, tenant);
   let entry = conversations.get(key);
@@ -264,6 +284,18 @@ function pushHistory(phone, role, text, tenantInput) {
   entry.messages.push({ role, text, ts: Date.now() });
   if (entry.messages.length > MAX_HISTORY) entry.messages.shift();
   entry.updatedAt = Date.now();
+  // حفظ دائم في Postgres (لا يضيع عند restart)
+  if (isDbEnabled()) {
+    try {
+      const { db } = await import("./db.mjs");
+      await db().query(
+        `INSERT INTO messages (tenant_id, phone, role, text) VALUES ($1,$2,$3,$4)`,
+        [tenant?.id, phone, role, text]
+      );
+    } catch (e) {
+      console.error(`  ⚠️ فشل حفظ الرسالة: ${e.message}`);
+    }
+  }
 }
 
 export function clearMemory(phone, tenantId) {
@@ -290,7 +322,31 @@ export function setTakeover(tenantId, phone, enabled, by = "admin") {
 export function isTakeover(tenantId, phone) {
   return takeoverMap.has(memoryKey(tenantId, phone));
 }
-export function listInbox(tenantFilter) {
+export async function listInbox(tenantFilter) {
+  // مع DB: آخر رسالة لكل محادثة من آخر 30 يوم
+  if (isDbEnabled()) {
+    try {
+      const { db } = await import("./db.mjs");
+      const r = tenantFilter
+        ? await db().query(
+            `SELECT DISTINCT ON (phone) tenant_id, phone, role, text, created_at FROM messages WHERE tenant_id=$1 ORDER BY phone, created_at DESC`,
+            [tenantFilter]
+          )
+        : await db().query(
+            `SELECT DISTINCT ON (tenant_id, phone) tenant_id, phone, role, text, created_at FROM messages ORDER BY tenant_id, phone, created_at DESC LIMIT 200`
+          );
+      return r.rows.map((row) => ({
+        tenantId: row.tenant_id,
+        phone: row.phone,
+        count: null,
+        updatedAt: new Date(row.created_at).getTime(),
+        takeover: takeoverMap.has(memoryKey(row.tenant_id, row.phone)),
+        lastMessage: { role: row.role, text: (row.text || "").slice(0, 120) },
+      }));
+    } catch (e) {
+      console.error(`  ⚠️ فشل Inbox من DB: ${e.message}`);
+    }
+  }
   const out = [];
   for (const [key, entry] of conversations.entries()) {
     const sep = key.indexOf("::");
@@ -310,9 +366,9 @@ export function listInbox(tenantFilter) {
   out.sort((a, b) => b.updatedAt - a.updatedAt);
   return out;
 }
-export function getConversation(tenantId, phone) {
-  const entry = conversations.get(memoryKey(tenantId, phone));
-  return entry ? entry.messages : [];
+export async function getConversation(tenantId, phone) {
+  const msgs = await getHistory(phone, { id: tenantId });
+  return msgs;
 }
 
 // ──────────────────────────────────────────────
@@ -329,14 +385,14 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
     await new Promise((r) => setTimeout(r, 300));
     const result = mockReply(userMessage);
     // حفظ في الذاكرة حتى في وضع DEMO (معزولة لكل بوت)
-    pushHistory(phone, "user", userMessage, tenant);
-    pushHistory(phone, "assistant", result.reply, tenant);
+    await pushHistory(phone, "user", userMessage, tenant);
+    await pushHistory(phone, "assistant", result.reply, tenant);
     return result;
   }
 
   try {
     let rawText = "";
-    const history = getHistory(phone, tenant);
+    const history = await getHistory(phone, tenant);
     // تحويل التاريخ لنص للسياق
     const historyContext = history.map(m => `${m.role === "user" ? "العميل" : botLabel}: ${m.text}`).join("\n");
 
@@ -405,14 +461,14 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
     }
 
     // حفظ في الذاكرة (معزولة لكل بوت)
-    pushHistory(phone, "user", userMessage, tenant);
-    pushHistory(phone, "assistant", parsed.reply, tenant);
+    await pushHistory(phone, "user", userMessage, tenant);
+    await pushHistory(phone, "assistant", parsed.reply, tenant);
     return parsed;
   } catch (err) {
     console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
     const fallback = mockReply(userMessage);
-    pushHistory(phone, "user", userMessage, tenant);
-    pushHistory(phone, "assistant", fallback.reply, tenant);
+    await pushHistory(phone, "user", userMessage, tenant);
+    await pushHistory(phone, "assistant", fallback.reply, tenant);
     return fallback;
   }
 }
@@ -631,22 +687,22 @@ export function createApp() {
     res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token } });
   });
 
-  app.get("/admin/appointments", (req, res) => {
+  app.get("/admin/appointments", async (req, res) => {
     const { tenant } = req.query;
-    res.json({ count: listAppointments(tenant).length, appointments: listAppointments(tenant) });
+    const _ap = await listAppointments(tenant); res.json({ count: _ap.length, appointments: _ap });
   });
 
-  app.get("/admin/orders", (req, res) => {
+  app.get("/admin/orders", async (req, res) => {
     const { tenant } = req.query;
-    res.json({ count: listOrders(tenant).length, orders: listOrders(tenant) });
+    const _or = await listOrders(tenant); res.json({ count: _or.length, orders: _or });
   });
 
   // صفحة دفع تجريبية (بدون Stripe تعرض زر تأكيد يحفظ paid)
   app.get("/pay/:orderId", async (req, res) => {
-    const order = getOrder(req.params.orderId);
+    const order = await getOrder(req.params.orderId);
     if (!order) return res.status(404).send("الطلب غير موجود");
     if (req.query.paid === "1") {
-      markOrderPaid(order.id);
+      await markOrderPaid(order.id);
       logEvent("order_paid", { tenantId: order.tenantId, phone: order.phone, orderId: order.id, total: order.total }).catch(() => {});
       // طلب تقييم تلقائي بعد الدفع
       const tenant = getTenantFull(order.tenantId);
@@ -655,7 +711,7 @@ export function createApp() {
         requestCsat(order.tenantId, order.phone, order.id);
         try {
           await sendWhatsAppMessage(order.phone, msg, tenant);
-          pushHistory(order.phone, "assistant", msg, tenant);
+          await pushHistory(order.phone, "assistant", msg, tenant);
         } catch (e) {
           console.error(`  ❌ فشل إرسال CSAT: ${e.message}`);
         }
@@ -678,19 +734,19 @@ export function createApp() {
     for (const phone of phones) {
       try {
         await sendWhatsAppMessage(phone, text, tenant);
-        pushHistory(phone, "assistant", text, tenant);
+        await pushHistory(phone, "assistant", text, tenant);
         results.push({ phone, ok: true });
       } catch (e) {
         results.push({ phone, ok: false, error: e.message });
       }
       await new Promise((r) => setTimeout(r, 800)); // تجنب rate limit
     }
-    const rec = saveBroadcast({ tenantId, text, phones, results });
+    const rec = await saveBroadcast({ tenantId, text, phones, results });
     logEvent("broadcast", { tenantId, count: phones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id }).catch(() => {});
     res.json({ ok: true, broadcast: rec });
   });
-  app.get("/admin/broadcasts", (req, res) => {
-    const all = listBroadcasts(req.query.tenant);
+  app.get("/admin/broadcasts", async (req, res) => {
+    const all = await listBroadcasts(req.query.tenant);
     res.json({ count: all.length, broadcasts: all });
   });
 
@@ -704,25 +760,25 @@ export function createApp() {
     requestCsat(tenantId, phone, null);
     try {
       await sendWhatsAppMessage(phone, msg, tenant);
-      pushHistory(phone, "assistant", msg, tenant);
+      await pushHistory(phone, "assistant", msg, tenant);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
   });
-  app.get("/admin/csat", (req, res) => {
-    res.json({ ok: true, ...csatStats(req.query.tenant) });
+  app.get("/admin/csat", async (req, res) => {
+    res.json({ ok: true, ...(await csatStats(req.query.tenant)) });
   });
 
   // ── CRM: سجل الأحداث + تصدير CSV ──
-  app.get("/admin/crm", (req, res) => {
+  app.get("/admin/crm", async (req, res) => {
     const { tenant, type, limit } = req.query;
-    const events = listEvents({ tenantId: tenant, type, limit: Number(limit || 100) });
+    const events = await listEvents({ tenantId: tenant, type, limit: Number(limit || 100) });
     res.json({ count: events.length, events });
   });
-  app.get("/admin/crm/export.csv", (req, res) => {
+  app.get("/admin/crm/export.csv", async (req, res) => {
     const { tenant, type } = req.query;
-    const events = listEvents({ tenantId: tenant, type, limit: 2000 });
+    const events = await listEvents({ tenantId: tenant, type, limit: 2000 });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=crm.csv");
     res.send("\uFEFF" + toCSV(events));
@@ -731,7 +787,7 @@ export function createApp() {
   // ── سلة مهجورة: تشغيل يدوي ──
   app.post("/admin/cart-remind-run", async (req, res) => {
     const afterMinutes = Number(req.body?.afterMinutes ?? 60);
-    const due = dueCartReminders({ afterMinutes });
+    const due = await dueCartReminders({ afterMinutes });
     const sent = [];
     for (const o of due) {
       const tenant = getTenantFull(o.tenantId);
@@ -739,8 +795,8 @@ export function createApp() {
       const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
       try {
         await sendWhatsAppMessage(o.phone, msg, tenant);
-        pushHistory(o.phone, "assistant", msg, tenant);
-        markCartReminded(o.id);
+        await pushHistory(o.phone, "assistant", msg, tenant);
+        await markCartReminded(o.id);
         logEvent("cart_reminded", { tenantId: o.tenantId, phone: o.phone, orderId: o.id, total: o.total }).catch(() => {});
         sent.push(o.id);
       } catch (e) {
@@ -751,15 +807,16 @@ export function createApp() {
   });
 
   // ── Inbox: قائمة المحادثات + محادثة واحدة ──
-  app.get("/admin/inbox", (req, res) => {
-    res.json({ count: listInbox(req.query.tenant).length, inbox: listInbox(req.query.tenant) });
+  app.get("/admin/inbox", async (req, res) => {
+    const inbox = await listInbox(req.query.tenant);
+    res.json({ count: inbox.length, inbox });
   });
-  app.get("/admin/inbox/:tenantId/:phone", (req, res) => {
+  app.get("/admin/inbox/:tenantId/:phone", async (req, res) => {
     const { tenantId, phone } = req.params;
     res.json({
       tenantId, phone,
       takeover: isTakeover(tenantId, phone),
-      messages: getConversation(tenantId, phone),
+      messages: await getConversation(tenantId, phone),
     });
   });
 
@@ -780,7 +837,7 @@ export function createApp() {
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     try {
       const r = await sendWhatsAppMessage(phone, text, tenant);
-      pushHistory(phone, "assistant", text, tenant);
+      await pushHistory(phone, "assistant", text, tenant);
       res.json({ ok: true, result: r });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
@@ -809,7 +866,7 @@ load();
   // ── تذكير المواعيد: تشغيل يدوي + إلغاء حجز ──
   app.post("/admin/remind-run", async (req, res) => {
     const afterMinutes = Number(req.body?.afterMinutes ?? 1);
-    const due = dueReminders({ afterMinutes });
+    const due = await dueReminders({ afterMinutes });
     const sent = [];
     for (const b of due) {
       const tenant = getTenantFull(b.tenantId);
@@ -817,8 +874,8 @@ load();
       const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
       try {
         await sendWhatsAppMessage(b.phone, msg, tenant);
-        pushHistory(b.phone, "assistant", msg, tenant);
-        markReminded(b.id);
+        await pushHistory(b.phone, "assistant", msg, tenant);
+        await markReminded(b.id);
         sent.push(b.id);
       } catch (e) {
         console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
@@ -826,8 +883,8 @@ load();
     }
     res.json({ ok: true, due: due.length, sent });
   });
-  app.post("/admin/appointments/:id/cancel", (req, res) => {
-    const b = cancelAppointment(req.params.id);
+  app.post("/admin/appointments/:id/cancel", async (req, res) => {
+    const b = await cancelAppointment(req.params.id);
     if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
     res.json({ ok: true, booking: b });
   });
@@ -925,11 +982,9 @@ load();
             console.log(`\n${"─".repeat(60)}`);
             console.log(`  🏢 tenant=${tenant?.id} | بوت=${tenant?.botName}`);
             console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"${buttonId ? ` [btn=${buttonId}]` : ""}`);
-            console.log(`  🧠 الذاكرة: ${getHistory(from, tenant).length} رسائل سابقة`);
-
-            // —— Takeover: إذا الموظف مستلم المحادثة، لا يرد البوت ——
+            console.log(`  🧠 الذاكرة: ${(await getHistory(from, tenant)).length} رسائل سابقة`);
             if (isTakeover(tenant?.id, from)) {
-              pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "user", text, tenant);
               console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
@@ -940,12 +995,12 @@ load();
               const pending = hasPendingCsat(tenant?.id, from);
               if (pending) {
                 const score = Number(text.trim());
-                const rating = saveRating({ tenantId: tenant.id, phone: from, score, refId: pending.refId });
+                const rating = await saveRating({ tenantId: tenant.id, phone: from, score, refId: pending.refId });
                 const reply = score >= 4
                   ? `شكراً يا بطل! ⭐ تقييمك ${score}/5 أسعدنا. كريم معك خطوة بخطوة 👟`
                   : `شكراً لصراحتك يا غالي 🙏 تقييمك ${score}/5 وصلنا ورح نشتغل نحسّن. تحب يحكي معك موظف؟`;
-                pushHistory(from, "user", text, tenant);
-                pushHistory(from, "assistant", reply, tenant);
+                await pushHistory(from, "user", text, tenant);
+                await pushHistory(from, "assistant", reply, tenant);
                 logEvent("csat", { tenantId: tenant.id, phone: from, score, refId: pending.refId }).catch(() => {});
                 try {
                   await sendWhatsAppMessage(from, reply, tenant);
@@ -990,8 +1045,8 @@ load();
               setBookingState(tenant.id, from, { step: "slot" });
               const reply = `تمام يا غالي 😊 احجز موعدك في ${tenant.name}. أوقاتنا: ${tenant.features.workingHours || ""}. اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00) واسم الخدمة.`;
               result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
-              pushHistory(from, "user", text, tenant);
-              pushHistory(from, "assistant", reply, tenant);
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
               try {
                 await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
               } catch (e) {
@@ -1008,12 +1063,12 @@ load();
               if (slotMatch) {
                 const slot = slotMatch[1];
                 const service = (tenant.products || [])[0]?.name || "موعد";
-                const booking = bookAppointment({ tenantId: tenant.id, phone: from, name, service, day: "أقرب يوم متاح", slot });
+                const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day: "أقرب يوم متاح", slot });
                 setBookingState(tenant.id, from, null);
                 const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
                 result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
-                pushHistory(from, "user", text, tenant);
-                pushHistory(from, "assistant", reply, tenant);
+                await pushHistory(from, "user", text, tenant);
+                await pushHistory(from, "assistant", reply, tenant);
                 logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: booking.id, service, slot }).catch(() => {});
                 try {
                   await sendWhatsAppMessage(from, reply, tenant);
@@ -1045,7 +1100,7 @@ load();
             if (wantsPay) {
               try {
                 const total = detectTotal(tenant, text, result.reply);
-                const order = createOrder({
+                const order = await createOrder({
                   tenantId: tenant.id, phone: from, name,
                   items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
                   total, currency: "USD",
@@ -1073,7 +1128,7 @@ load();
                 await sendButtons(from, result.reply, result.buttons, tenant);
               } else {
                 // أول عرض للمنتجات: أرفق أزرار تلقائياً (كريم فقط، أول رسالتين)
-                const histLen = getHistory(from, tenant).length;
+                const histLen = (await getHistory(from, tenant)).length;
                 await sendWhatsAppMessage(from, result.reply, tenant);
                 if (tenant?.id === "kareem-sport" && histLen <= 2 && /حذاء|حزام|Bundle|لدينا/i.test(result.reply)) {
                   await sendButtons(from, "اختار بسرعة 👇", defaultButtonsFor(tenant), tenant).catch(() => {});
