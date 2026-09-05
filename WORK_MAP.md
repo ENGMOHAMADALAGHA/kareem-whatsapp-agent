@@ -1,10 +1,11 @@
 # خريطة عمل مشروع كريم - AI Sales Agent
 
-> وثيقة مرجعية شاملة لكل خطوة تم تنفيذها - من الصفر حتى التشغيل على Render
+> وثيقة مرجعية شاملة لكل خطوة تم تنفيذها - من الصفر حتى Multi-Tenant + أسابيع 1-4
 
 ## 1. نظرة عامة
-- **الاسم:** كريم - وكيل مبيعات ذكي لمتجر مستلزمات رياضية
-- **المنتجات:** حذاء ركض $50 / حزام دعم ظهر $20 / توصيل $5
+- **الاسم:** كريم - وكيل مبيعات ذكي لمتجر مستلزمات رياضية (+ ليان لعيادة الأسنان)
+- **المنتجات (كريم):** حذاء ركض $50 / حزام دعم ظهر $20 / توصيل $5 / عرض Bundle $70 شامل
+- **الخدمات (ليان):** تنظيف $30 / حشوة $80 / تقويم (استشارة $0)
 - **المنصة:** واتساب Cloud API (Meta) + Node.js + Express + Google Gemini
 - **الاستضافة:** Render (https://kareem-whatsapp-agent.onrender.com)
 - **المستودع:** https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
@@ -15,12 +16,26 @@
 
 ```
 whatsapp-ai-agent/
-├── agent.mjs          # منطق كريم + System Prompt + AI + Mock
+├── agent.mjs          # منطق البوتات + Webhook + Admin + AI + Mock
 ├── server.mjs         # wrapper للسيرفر (يستدعي agent.mjs)
+├── tenants.mjs        # إدارة البوتات (حل tenant + عزل + بناء Prompt)
+├── tenants.json       # إعدادات البوتات (kareem-sport + agha-dental)
+├── bookings.mjs       # حجوزات العيادات + تذكير
+├── appointments.json  # سجل الحجوزات
+├── voice.mjs          # تحميل الفويس من واتساب + تفريغ Gemini
+├── orders.mjs         # طلبات + روابط دفع + سلة مهجورة
+├── orders.json        # سجل الطلبات
+├── crm.mjs            # سجل أحداث CRM + webhook خارجي + CSV
+├── crm.json           # سجل الأحداث
+├── engage.mjs         # بث Broadcast + تقييم CSAT
+├── broadcasts.json    # سجل البثات
+├── csat.json          # سجل التقييمات
 ├── package.json       # type:module + dependencies
 ├── .env               # متغيرات بيئة (لا يُرفع)
 ├── .env.example       # قالب للمتغيرات
 ├── .gitignore
+├── WORK_MAP.md        # هذه الوثيقة
+├── RDP_DEPLOY.md      # خطوات النقل على RDP خاص
 └── .github/workflows/keep-alive.yml  # يصحي Render كل 10د
 ```
 
@@ -44,14 +59,25 @@ whatsapp-ai-agent/
 
 ```ini
 AI_PROVIDER=google
-GOOGLE_API_KEY=AIza... (من aistudio.google.com)
+GOOGLE_API_KEY=AIza... (من aistudio.google.com - لا يُحفظ في Git)
 OPENAI_API_KEY=DEMO_KEY
 AI_MODEL=gemini-flash-lite-latest
 
 PORT=3000
 WEBHOOK_VERIFY_TOKEN=my_secret_token
-WHATSAPP_TOKEN=EAA... (من Meta Developers)
+WHATSAPP_TOKEN=EAA... (من Meta Developers - لا يُحفظ في Git)
 WHATSAPP_PHONE_ID=1300758353117196
+
+STRIPE_SECRET_KEY= (اختياري - بدونه رابط دفع محلي تجريبي)
+PUBLIC_BASE_URL=https://kareem-whatsapp-agent.onrender.com
+CRM_WEBHOOK_URL= (اختياري - Sheets عبر Make/n8n)
+ADMIN_USER=admin
+ADMIN_PASS=<كلمة قوية>
+VOICE_TIMEOUT_MS=15000
+VOICE_MAX_MB=8
+REMIND_EVERY_MS=300000
+REMIND_AFTER_MIN=60
+CART_AFTER_MIN=60
 ```
 
 - **Render:** نفس المتغيرات في Dashboard → Environment
@@ -59,37 +85,67 @@ WHATSAPP_PHONE_ID=1300758353117196
 
 ---
 
-## 4. منطق كريم (agent.mjs)
+## 4. منطق البوتات (agent.mjs + tenants.mjs)
 
-### System Prompt
-- الاسم كريم، لبق مباشر مهني، عربي
-- الشفافية: يقر أنه ذكاء اصطناعي إذا سُئل
-- المنتجات فقط المذكورة، ممنوع اقتراح غيرها
-- اعتراض على السعر → يوضح القيمة + يقترح المنتج المكمل
-- تصعيد → `transfer_to_human:true` + يبلغ الفريق
+### شخصية كريم المميزة
+- تحية `يا هلا والله يا بطل! 😊` + بصمة `كريم معك خطوة بخطوة 👟`
+- لهجة أردنية عامية + إنجليزي تلقائي حسب لغة العميل
+- الشفافية: يقر أنه ذكي آلي إذا سُئل
+- اعتراض على السعر → يوضح القيمة + سؤال مفتوح (الراحة ولا الظهر؟)
 
-### هيكل الرد (JSON Only)
+### هيكل الرد (JSON)
 ```json
 {
-  "reply": "نص عربي",
+  "reply": "نص الرد بنفس لغة العميل",
   "transfer_to_human": false,
-  "intent": "استفسار | شراء | اعتراض_على_السعر | تصعيد"
+  "intent": "استفسار | شراء | اعتراض_على_السعر | تصعيد | حجز_موعد",
+  "buttons": [{"id": "buy_shoes", "title": "👟 الحذاء $50"}],
+  "image": "رابط صورة (اختياري)"
 }
 ```
 
 ### الدوال الأساسية
-- `mockReply(msg)` - محاكاة محلية بدون API (8 حالات)
-- `getKareemReply(msg)` / `processCustomerMessage` - تستدعي GoogleGenAI أو OpenAI مع `responseMimeType: application/json` + fallback للمحاكاة
-- `sendWhatsAppMessage(to, text)` - `POST https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages` مع `Bearer WHATSAPP_TOKEN`، أو محاكاة إذا `DEMO`
-- `createApp()` - Express app مع `express.json()`
-  - `GET /` → health `{name, status, webhook, mode}`
-  - `GET /webhook` → يتحقق `hub.mode=subscribe` و `hub.verify_token === WEBHOOK_VERIFY_TOKEN` ويرجع `hub.challenge` وإلا 403
-  - `POST /webhook` → يستخرج `from` و `text.body` من `entry[0].changes[0].value.messages[0]`، يستدعي `processCustomerMessage`، يطبع `intent` ويرسل الرد عبر `sendWhatsAppMessage`
-- `startServer(port)` - يشغل على `PORT`
+- `mockReply(msg)` - محاكاة محلية
+- `getKareemReply(msg, phone, tenant)` / `processCustomerMessage` - AI مع ذاكرة معزولة `tenant::phone` (6 ساعات، 10 رسائل)
+- `sendWhatsAppMessage(to, text, tenant)` + `sendButtons` + `sendImage` - لكل بوت توكنه الخاص
+- `resolveTenant({phoneNumberId / verifyToken})` - حل البوت من رقم المستقبل
+- `buildSystemPrompt(tenant)` - Prompt مبني من منتجات كل بوت
+- `downloadWhatsAppMedia` + `transcribeAudio` - فويس (مهلة 15ث + حد 8MB + إعادة محاولة + موديل بديل)
+- `createOrder` + `createPaymentLink` - طلبات + Stripe أو رابط محلي `/pay/:id`
+- `bookAppointment` + `dueReminders` - حجوزات + تذكير تلقائي كل 5د
+- `logEvent` - كل حدث (message/order/booking/csat/...) + webhook خارجي اختياري
+- Inbox: `listInbox` + `setTakeover`/`isTakeover` - إيقاف البوت لتدخل بشري
+
+### Endpoints
+```
+GET  /                                  → health + عدد البوتات
+GET  /webhook                           → تحقق Meta (يدعم أكثر من بوت)
+POST /webhook                           → استقبال (رد 200 فوري + معالجة خلفية + منع تكرار wamid)
+GET  /admin/tenants                     → قائمة البوتات (🔒)
+POST /admin/tenants                     → إضافة بوت (🔒)
+GET  /admin/tenants/:id                 → تفاصيل بوت (🔒)
+GET  /admin/inbox?tenant=               → المحادثات الحية (🔒)
+GET  /admin/inbox/:tenant/:phone        → محادثة واحدة (🔒)
+GET  /admin/inbox.html                  → صفحة Inbox (🔒)
+POST /admin/takeover                    → إيقاف/تشغيل البوت (🔒)
+POST /admin/send                        → إرسال يدوي من الموظف (🔒)
+GET  /admin/appointments?tenant=        → الحجوزات (🔒)
+POST /admin/appointments/:id/cancel     → إلغاء حجز (🔒)
+POST /admin/remind-run                  → تذكير مواعيد يدوي (🔒)
+GET  /admin/orders?tenant=              → الطلبات (🔒)
+GET  /pay/:orderId                      → صفحة دفع (تجريبي/حقيقي + طلب تقييم بعد الدفع)
+GET  /admin/crm?tenant=&type=           → سجل الأحداث (🔒)
+GET  /admin/crm/export.csv              → تصدير Excel (🔒)
+POST /admin/cart-remind-run             → تذكير سلة مهجورة يدوي (🔒)
+POST /admin/broadcast                   → بث جماعي (🔒)
+GET  /admin/broadcasts                  → سجل البثات (🔒)
+POST /admin/csat-request                → طلب تقييم (🔒)
+GET  /admin/csat?tenant=                → إحصائيات التقييم (🔒)
+```
+(🔒 = محمي بـ Basic Auth عبر `ADMIN_USER`/`ADMIN_PASS`)
 
 ### الاختبارات
-- 8 حالات في `runTests()` + `printResult()` ملون
-- التشغيل: `node agent.mjs --test` أو `npm test`
+- 8 حالات في `runTests()` - التشغيل: `node agent.mjs --test` أو `npm test`
 
 ---
 
@@ -99,22 +155,43 @@ WHATSAPP_PHONE_ID=1300758353117196
 graph TD
   A[1. npm install] --> B[2. .env + .env.example]
   B --> C[3. agent.mjs + System Prompt]
-  C --> D[4. node agent.mjs --test → 8 اختبارات DEMO]
-  D --> E[5. winget install ngrok.ngrok]
-  E --> F[6. ngrok config add-authtoken + ngrok update 3.39.11]
-  F --> G[7. node server.mjs + ngrok http 3000 → https://confident-cargo-elderly.ngrok-free.dev]
-  G --> H[8. Meta App: Kareem Sport Store → Use case: التواصل عبر واتساب → AGha Gaming]
-  H --> I[9. Phone Number ID 1300758353117196 + Token EAA...]
-  I --> J[10. Webhook Verify: URL + my_secret_token → 200]
-  J --> K[11. git init + push → github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent]
-  K --> L[12. Render: New Web Service → Build npm install / Start npm start → env vars]
-  L --> M[13. Render Live https://kareem-whatsapp-agent.onrender.com]
-  M --> N[14. WABA subscribe: POST /1329892032314692/subscribed_apps → success]
-  N --> O[15. Google AI Studio → Gemini API Key AIza... → model gemini-flash-lite-latest]
-  O --> P[16. تحديث Render env + redeploy → mode: google (live)]
-  P --> Q[17. keep-alive.yml كل 10د]
-  Q --> R[18. واتساب اختبار: +1 555 667-6129 ↔ +962790362429]
+  C --> D[4. tests DEMO]
+  D --> E[5. ngrok 3.39.11]
+  E --> F[6. Meta App: Kareem Sport Store → AGha Gaming]
+  F --> G[7. Phone ID 1300758353117196 + Token EAA...]
+  G --> H[8. Webhook Verify + messages مشترك]
+  H --> I[9. git push → GitHub]
+  I --> J[10. Render Live]
+  J --> K[11. WABA subscribed_apps → success]
+  K --> L[12. Gemini API + gemini-flash-lite-latest → mode google]
+  L --> M[13. رسائل مميزة + Bundle $70 + لهجة أردنية]
+  M --> N[14. ذاكرة 6س + عربي/إنجليزي]
+  N --> O[15. Multi-Tenant: tenants.mjs + عزل tenant::phone + /admin]
+  O --> P[16. أزرار + صور + بوت عيادة agha-dental + حجز]
+  P --> Q[17. أسبوع1: فويس + طلبات + دفع]
+  Q --> R[18. أسبوع2: Inbox + Takeover + تذكير]
+  R --> S[19. أسبوع3: سلة مهجورة + CRM]
+  S --> T[20. أسبوع4: Broadcast + CSAT]
+  T --> U[21. حماية admin + تقوية فويس + منع الرد المكرر]
+  U --> V[22. واتساب: +1 555 667-6129 ↔ +962790362429]
 ```
+
+### سجل الـ Commits المهمة
+| Commit | الوصف |
+|---|---|
+| `94bb2ea` | ربط Gemini الحقيقي |
+| `afd5810` | رسائل كريم المميزة + Bundle |
+| `96d70af` | ذاكرة المحادثة |
+| `3654d12` | عربي/إنجليزي تلقائي |
+| `5cf586a` | Multi-Tenant + عزل + /admin |
+| `58554f3` | أزرار + صور + حجز + عيادة |
+| `215d9d8` | أسبوع1: فويس + طلبات + دفع |
+| `3b3dc1a` | أسبوع2: Inbox + Takeover + تذكير |
+| `e9fdd96` | أسبوع3: سلة مهجورة + CRM |
+| `7d69376` | أسبوع4: Broadcast + CSAT |
+| `1679e71` | حماية /admin |
+| `30af044` | تقوية الفويس |
+| `64b87cd` | منع الرد المكرر (200 فوري + wamid) |
 
 ---
 
@@ -123,13 +200,13 @@ graph TD
 1. https://developers.facebook.com → Create App → **Kareem Sport Store** (بدون كلمة whatsapp)
 2. Use Case → **التواصل مع العملاء عبر واتساب** ✓
 3. Business Portfolio → **AGha Gaming**
-4. **الخطوة 1. جرّب:** يظهر `Phone Number ID 1300758353117196` و `+1 555 667-6129` والتوكن `EAA...` (إنشاء رمز)
+4. **الخطوة 1. جرّب:** `Phone Number ID 1300758353117196` و `+1 555 667-6129` والتوكن (إنشاء رمز)
 5. **الخطوة 2. إعداد التشغيل → تكوين Webhooks:**
    - **Callback URL:** `https://kareem-whatsapp-agent.onrender.com/webhook`
    - **Verify Token:** `my_secret_token`
-   - **Fields:** `messages` = **مشترك** (أزرق)، `phone_number_quality_update` مشترك، `security` مشترك
-   - **Subscribe WABA:** `POST /1329892032314692/subscribed_apps` → ظهر `Kareem Sport Store` في القائمة
-6. **إضافة مستلم تجريبي:** في **إرسال رسالة → المستلم** → أضف `+962790362429` ووثقه عبر واتساب
+   - **Fields:** `messages` = **مشترك** (أزرق)
+   - **Subscribe WABA:** `POST /1329892032314692/subscribed_apps`
+6. **مستلم تجريبي:** `+962790362429` (التجريبي محدود بـ 5 أرقام - للإنتاج: توثيق + رقم حقيقي)
 
 ---
 
@@ -137,69 +214,40 @@ graph TD
 
 ### GitHub
 ```bash
-git init
-git add .
-git commit -m "feat: kareem whatsapp webhook agent"
-git remote add origin https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent.git
-git branch -M main
-git push -u origin main
+git add . && git commit -m "msg" && git push origin main
+# المستودع: https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
 ```
 
 ### Render
-- Dashboard → New + → Web Service → Connect `kareem-whatsapp-agent`
 - Build: `npm install`, Start: `npm start`, Region Oregon, Plan Free
-- Env Vars: 6 متغيرات كما فوق
-- Auto-Deploy: **yes** (بعد Rollback كان no وتم تفعيله عبر API)
+- Env Vars: كل متغيرات قسم 3 + Auto-Deploy: **yes**
 - URL: `https://kareem-whatsapp-agent.onrender.com`
-- Logs: `Your service is live`, `GET /webhook → نجاح`, `📥 رسالة واتساب من ...`
 
 ### keep-alive
-- `.github/workflows/keep-alive.yml` كل `*/10 * * * *` يعمل `curl` للسيرفر + `cron-job.org` كبديل
-- Render Free ينام بعد 15د، الـ ping يبقيه صاحي
+- `.github/workflows/keep-alive.yml` كل 10د + `cron-job.org` كبديل
 
-### ngrok (مرحلة انتقالية)
-- `winget install ngrok.ngrok` → `3.3.1` → `ngrok update` → `3.39.11` (احتاج استثناء Antivirus)
-- `ngrok config add-authtoken 3Ii7CzxTb...` → `ngrok http 3000` → `https://confident-cargo-elderly.ngrok-free.dev`
-- تم الاستغناء عنه بعد Render
+### RDP خاص (لاحقاً)
+- التفاصيل الكاملة في `RDP_DEPLOY.md` (git clone + pm2 + Cloudflare Tunnel)
 
 ---
 
 ## 8. اختبارات واتساب
 
-- **الرقم التجريبي:** `+1 (555) 667-6129` (Meta)
-- **رقم الاختبار:** `+962-7-9036-2429`
-- **اختبارات ناجحة في Render Logs:**
-  - `11:41:59 "مرحبا" → intent:استفسار → ✅ تم الإرسال wamid.HBg...`
-  - `11:48:05 "مرحبا" → ✅`
-  - `12:11:29 Test "مرحبا" → ✅`
-- **اختبار مباشر عبر API:**
-```bash
-curl -X POST https://graph.facebook.com/v18.0/1300758353117196/messages \
-  -H "Authorization: Bearer EAA..." \
-  -d '{"messaging_product":"whatsapp","to":"962790362429","type":"text","text":{"body":"اختبار"}}'
-# → 200 {"messages":[{"id":"wamid..."}]}
-```
-- **اختبار webhook يدوي:**
-```bash
-curl -X POST https://kareem-whatsapp-agent.onrender.com/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"object":"whatsapp_business_account","entry":[{"changes":[{"value":{"messaging_product":"whatsapp","messages":[{"from":"962790362429","type":"text","text":{"body":"السعر غالي"}}]},"field":"messages"}]}]}'
-# → 200 EVENT_RECEIVED → يرد "أتفهم وجهة نظرك..."
-```
+- **الرقم التجريبي:** `+1 (555) 667-6129` / **رقم الاختبار:** `+962-7-9036-2429`
+- `مرحبا` → أزرار + `intent:استفسار`
+- `السعر غالي` → قيمة + سؤال مفتوح + `اعتراض_على_السعر`
+- `أريد الحذاء` → طلب `ord_...` + رابط دفع + `شراء`
+- فويس → تفريغ + معالجة كنص
+- `بدي احجز` (عيادة) → أوقات → تأكيد `bk_...` → تذكير
+- بعد الدفع → طلب تقييم 1-5 → `⭐ avg`
 
 ---
 
 ## 9. الذكاء الاصطناعي
 
-- **المزود:** `google` عبر `@google/genai`
-- **المفتاح:** `AIza...` (من aistudio.google.com - لا يُحفظ في Git)
-- **النموذج:** `gemini-flash-lite-latest` (الوحيد المتاح للمستخدمين الجدد، `gemini-2.0-flash` و `1.5` منتهية)
-- **الاختبار المحلي:**
-```bash
-node --env-file=.env -e "import {getKareemReply} from './agent.mjs'; console.log(await getKareemReply('السعر غالي'))"
-# → {"reply":"أتفهمك...","transfer_to_human":false,"intent":"اعتراض_على_السعر"}
-```
-- **Fallback:** عند `403` أو `503` يرجع لـ `mockReply` المحلي
+- **المزود:** `google` عبر `@google/genai` - **النموذج:** `gemini-flash-lite-latest`
+- **Fallback:** عند `403`/`503` يرجع لـ `mockReply` المحلي
+- **الفويس:** نفس المفتاح (تفريغ + إعادة محاولة + موديل بديل)
 
 ---
 
@@ -207,46 +255,56 @@ node --env-file=.env -e "import {getKareemReply} from './agent.mjs'; console.log
 
 | المشكلة | السبب | الحل |
 |---------|-------|------|
-| `ngrok 3.3.1 too old ERR_NGROK_121` | نسخة قديمة | `ngrok update` → `3.39.11` + استثناء Antivirus |
-| `ERR_NGROK_4018 not authenticated` | بدون authtoken | `ngrok config add-authtoken ...` |
-| `model gemini-2.0-flash not found` | موديل منتهي | غيّر إلى `gemini-flash-lite-latest` (ListModels) |
-| `Webhook token undefined` | طلب بدون `hub.verify_token` | تأكد من `my_secret_token` في Meta و .env |
-| `رسائل واتساب ما بتوصل` | `messages` مش مشترك أو WABA مش مشترك | `POST /1329892032314692/subscribed_apps` + تفعيل `messages` أزرق |
-| `Render free spins down` | ينام بعد 15د | `keep-alive.yml` كل 10د + cron-job.org |
-| `Auto-Deploy disabled after rollback` | Rollback عطّلها | PATCH `autoDeploy:yes` عبر Render API + redeploy |
+| `ngrok 3.3.1 too old ERR_NGROK_121` | نسخة قديمة | `ngrok update` → `3.39.11` |
+| `model gemini-2.0-flash not found` | موديل منتهي | `gemini-flash-lite-latest` |
+| `رسائل واتساب ما بتوصل` | `messages` مش مشترك أو WABA مش مشترك | `subscribed_apps` + تفعيل `messages` |
+| `Render free spins down` | ينام بعد 15د | `keep-alive.yml` كل 10د |
+| `Auto-Deploy disabled after rollback` | Rollback عطّلها | PATCH `autoDeploy:yes` عبر Render API |
+| `البوت يرد مرتين نفس الرد` | Meta يعيد الإرسال عند تأخر الـ 200 | رد 200 فوري + معالجة خلفية + تجاهل `wamid` المكرر |
+| `401 على /admin` | بدون Basic Auth | ضع `ADMIN_USER`/`ADMIN_PASS` في Render Env |
+| `Recipient not in allowed list (131030)` | رقم مش مسجل تجريبياً | أضفه في Meta → المستلم أو وثّق رقم حقيقي |
 
 ---
 
 ## 11. أوامر سريعة
 
 ```bash
-# محلي
 npm install
 node agent.mjs --test
 node server.mjs
-# ngrok (مرحلة قديمة)
-ngrok http 3000
-# Git
 git add . && git commit -m "msg" && git push
-# اختبار webhook محلي
+# Webhook محلي + تكرار
 curl "http://localhost:3000/webhook?hub.mode=subscribe&hub.verify_token=my_secret_token&hub.challenge=12345"
-curl -X POST http://localhost:3000/webhook -H "Content-Type: application/json" -d '{"object":"whatsapp_business_account","entry":[{"changes":[{"value":{"messages":[{"from":"962790362429","text":{"body":"مرحبا"}}]},"field":"messages"}]}]}'
+curl -X POST http://localhost:3000/webhook -H "Content-Type: application/json" -d '{"object":"whatsapp_business_account","entry":[{"changes":[{"value":{"messages":[{"from":"962790362429","id":"wamid.test1","type":"text","text":{"body":"مرحبا"}}]},"field":"messages"}]}]}'
+# Admin (مع Auth)
+curl -u admin:PASS https://kareem-whatsapp-agent.onrender.com/admin/tenants
+curl -u admin:PASS https://kareem-whatsapp-agent.onrender.com/admin/crm/export.csv -o crm.csv
 # Render
 curl https://kareem-whatsapp-agent.onrender.com/
-curl "https://kareem-whatsapp-agent.onrender.com/webhook?hub.mode=subscribe&hub.verify_token=my_secret_token&hub.challenge=123"
 ```
 
 ---
 
-## 12. المراجع
+## 12. الباقي (خارطة الطريق)
 
-- Meta Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
-- Render Docs: https://render.com/docs/web-services#port-binding (PORT 10000)
-- Google AI Studio: https://aistudio.google.com/app/apikey
-- ngrok: https://ngrok.com/download
-- GitHub: https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
-- Render Service: https://dashboard.render.com/web/srv-dabjdru1egvs73b15050 (ID: srv-dabjdru1egvs73b15050)
+- [ ] `STRIPE_SECRET_KEY` في Render → دفع حقيقي
+- [ ] `CRM_WEBHOOK_URL` → Google Sheets
+- [ ] توثيق Meta + رقم حقيقي (بدل التجريبي)
+- [ ] Dashboard مرئية تجمع `/admin/*`
+- [ ] قاعدة معرفة RAG + قوالب Meta المعتمدة + إشعار موظف فوري
+- [ ] تسعير Sub-contract ($29/$59) + RDP خاص
 
 ---
 
-*آخر تحديث: 2026-09-02 00:41 - Deploy 94bb2ea live*
+## 13. المراجع
+
+- Meta Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
+- Render Docs: https://render.com/docs/web-services#port-binding
+- Google AI Studio: https://aistudio.google.com/app/apikey
+- Stripe Keys: https://dashboard.stripe.com/apikeys
+- GitHub: https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
+- Render Service ID: `srv-dabjdru1egvs73b15050`
+
+---
+
+*آخر تحديث: 2026-09-05 - يشمل كل Commits حتى منع الرد المكرر (`64b87cd`)*
