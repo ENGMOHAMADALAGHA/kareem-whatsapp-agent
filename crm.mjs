@@ -1,9 +1,10 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
+import crypto from "node:crypto";
 
 // تسجيل حدث CRM + إرسال اختياري لـ webhook خارجي (Sheets/Make/n8n)
 export async function logEvent(type, data = {}) {
   const event = {
-    id: `ev_${Date.now().toString(36)}${Math.floor(Math.random() * 99)}`,
+    id: `ev_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`,
     type, // message | order | order_paid | booking | booking_reminded | cart_reminded | takeover | handover | broadcast | csat
     ...data,
     at: new Date().toISOString(),

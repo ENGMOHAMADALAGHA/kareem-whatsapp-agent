@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 
 function secret() {
@@ -17,7 +18,7 @@ export async function createClientUser({ tenantId, name, phone, password }) {
     where: { tenantId_phone: { tenantId, phone } },
     update: { name: name || undefined, passwordHash },
     create: {
-      id: `usr_${Date.now().toString(36)}`,
+      id: `usr_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`,
       phone, name: name || phone, passwordHash,
     },
   });

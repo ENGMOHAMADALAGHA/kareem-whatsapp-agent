@@ -13,7 +13,6 @@ export async function isTakeover(tenantId, phone) {
 }
 export async function listInbox(tenantFilter) {
   try {
-    const { tenantDb, systemDb } = await import("./src/security/tenantGuard.mjs");
     const T = tenantFilter ? tenantDb(tenantFilter) : systemDb("inbox:global");
     const rows = await T.message.groupBy({
       by: ["tenantId", "phone"],

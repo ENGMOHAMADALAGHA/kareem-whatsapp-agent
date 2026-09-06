@@ -463,7 +463,24 @@ async function processWebhookBody(body) {
                 console.log(`${"─".repeat(60)}\n`);
                 continue;
               }
-              const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day, slot });
+              let booking;
+              try {
+                booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day, slot });
+              } catch (e) {
+                if (e?.code === "SLOT_TAKEN" || e?.code === "P2002") {
+                  const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots, capacity);
+                  const reply = free.length
+                    ? `للأسف الساعة ${slot} انحجزت قبل لحظات 😅 الفارغ عندنا: ${free.join("، ")}. اختر واحد منهم؟`
+                    : `للأسف كل الأوقات انحجزت 😅 أضفتك لقائمة الانتظار.`;
+                  if (!free.length) await joinWaitingList({ tenantId: tenant.id, phone: from, name, service });
+                  await pushHistory(from, "user", text, tenant);
+                  await pushHistory(from, "assistant", reply, tenant);
+                  try { await sendWhatsAppMessage(from, reply, tenant); } catch (se) { console.error(`  ❌ فشل الإرسال: ${se.message}`); }
+                  console.log(`${"─".repeat(60)}\n`);
+                  continue;
+                }
+                throw e;
+              }
               await setBookingState(tenant.id, from, null);
               const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
               result = { reply, transfer_to_human: false, intent: "حجز_موعد" };

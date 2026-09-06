@@ -52,6 +52,26 @@ import { createClientUser, listClientUsers } from "../../../portal.mjs";
 import { WHATSAPP_TOKEN } from "../../config/env.mjs";
 
 import { webhookQueue } from "../../jobs/queue.mjs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// admin.html lives at repo root; this file is at src/web/routes/
+const ADMIN_HTML = path.join(__dirname, "..", "..", "..", "admin.html");
+
+// Fail-closed multi-tenant scope: client JWT may only see its own tenant.
+// Global *All() fallbacks require super-admin (Basic). Otherwise 403.
+function resolveScope(req, explicitTenant) {
+  if (req.clientTenant) return { tenant: req.clientTenant, global: false };
+  const t = explicitTenant || req.query.tenant || req.body?.tenantId || req.body?.tenant || null;
+  if (t) return { tenant: t, global: false };
+  if (req.isSuperAdmin) return { tenant: null, global: true };
+  return { tenant: null, global: false, denied: true };
+}
+function denyGlobal(res) {
+  return res.status(403).json({ ok: false, error: "غير مصرح — حدد tenant أو سجل كسوبر أدمن" });
+}
 
 export function registerAdminRoutes(app) {
   app.get("/admin/queue", (req, res) => {
@@ -90,8 +110,12 @@ export function registerAdminRoutes(app) {
     }
   });
   app.get("/admin/users", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    // User list is SUPER_ONLY per middleware, but double-guard global reads here.
+    if (scope.global && !req.isSuperAdmin) return denyGlobal(res);
     const { listClientUsers } = await import("../../../portal.mjs");
-    const rows = await listClientUsers(req.query.tenant);
+    const rows = await listClientUsers(scope.global ? undefined : scope.tenant);
     res.json({ count: rows.length, users: rows });
   });
   app.get("/admin/tenants/:id", async (req, res) => {
@@ -102,15 +126,17 @@ export function registerAdminRoutes(app) {
     res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token } });
   });
   app.get("/admin/appointments", async (req, res) => {
-    const { tenant } = req.query;
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
     const { listAppointmentsAll } = await import("../../../bookings.mjs");
-    const _ap = tenant ? await listAppointments(tenant) : await listAppointmentsAll();
+    const _ap = scope.global ? await listAppointmentsAll() : await listAppointments(scope.tenant);
     res.json({ count: _ap.length, appointments: _ap });
   });
   app.get("/admin/orders", async (req, res) => {
-    const { tenant } = req.query;
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
     const { listOrdersAll } = await import("../../../orders.mjs");
-    const _or = tenant ? await listOrders(tenant) : await listOrdersAll();
+    const _or = scope.global ? await listOrdersAll() : await listOrders(scope.tenant);
     res.json({ count: _or.length, orders: _or });
   });
   // تأكيد دفع يدوي (موظف تحقق من المحفظة) + إشعار الزبون
@@ -137,22 +163,26 @@ export function registerAdminRoutes(app) {
     const order = await getPublicOrder(req.params.orderId);
     if (!order) return res.status(404).send("الطلب غير موجود");
     if (req.query.paid === "1") {
-      // وضع Stripe الحقيقي: لا نثق بالرابط وحده — نتحقق من الجلسة عبر API
-      if (process.env.STRIPE_SECRET_KEY && order.stripeSessionId) {
-        try {
-          const sres = await fetch(`https://api.stripe.com/v1/checkout/sessions/${order.stripeSessionId}`, {
-            headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
-          });
-          const sess = await sres.json();
-          if (sess.payment_status !== "paid") {
-            return res.send(`<h2>الدفع غير مكتمل ⏳ ${order.id}</h2><p>لم يصلنا تأكيد الدفع بعد. أكمل الدفع ثم حدّث الصفحة.</p>`);
-          }
-        } catch (e) {
-          return res.status(502).send("تعذر التحقق من الدفع، حاول لاحقاً.");
+      // NEVER trust ?paid=1 alone — only a verified Stripe session may flip to paid.
+      // Without STRIPE_SECRET_KEY there is no verification possible → refuse.
+      if (!process.env.STRIPE_SECRET_KEY || !order.stripeSessionId) {
+        return res.status(402).send(
+          `<h2>الدفع غير مؤكد ⏳ ${order.id}</h2><p>رابط الدفع تجريبي — لا يمكن تأكيد الدفع تلقائياً. أكمل الدفع عبر الرابط الرسمي أو انتظر تأكيد الموظف.</p>`
+        );
+      }
+      try {
+        const sres = await fetch(`https://api.stripe.com/v1/checkout/sessions/${order.stripeSessionId}`, {
+          headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
+        });
+        const sess = await sres.json();
+        if (sess.payment_status !== "paid") {
+          return res.send(`<h2>الدفع غير مكتمل ⏳ ${order.id}</h2><p>لم يصلنا تأكيد الدفع بعد. أكمل الدفع ثم حدّث الصفحة.</p>`);
         }
+      } catch (e) {
+        return res.status(502).send("تعذر التحقق من الدفع، حاول لاحقاً.");
       }
       const { finalizePaidOrder } = await import("./billing.mjs");
-      await finalizePaidOrder(order.id, "pay-page");
+      await finalizePaidOrder(order.id, "pay-page-verified");
       return res.send(`<h2>تم الدفع ✅ ${order.id} - $${order.total}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
     }
     res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);
@@ -181,11 +211,16 @@ export function registerAdminRoutes(app) {
     res.json({ ok: true, broadcast: rec });
   });
   app.get("/admin/broadcasts", async (req, res) => {
-    const all = await listBroadcasts(req.query.tenant);
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    if (scope.global && !req.isSuperAdmin) return denyGlobal(res);
+    const all = await listBroadcasts(scope.global ? undefined : scope.tenant);
     res.json({ count: all.length, broadcasts: all });
   });
   app.get("/admin/report", async (req, res) => {
-    const tenantId = req.query.tenant;
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const tenantId = scope.global ? undefined : scope.tenant;
     const days = Number(req.query.days || 30);
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const { tenantDb, systemDb } = await import("../../security/tenantGuard.mjs");
@@ -228,16 +263,22 @@ export function registerAdminRoutes(app) {
     }
   });
   app.get("/admin/csat", async (req, res) => {
-    res.json({ ok: true, ...(await csatStats(req.query.tenant)) });
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    res.json({ ok: true, ...(await csatStats(scope.global ? undefined : scope.tenant)) });
   });
   app.get("/admin/crm", async (req, res) => {
-    const { tenant, type, limit } = req.query;
-    const events = await listEvents({ tenantId: tenant, type, limit: Number(limit || 100) });
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const { type, limit } = req.query;
+    const events = await listEvents({ tenantId: scope.global ? undefined : scope.tenant, type, limit: Number(limit || 100) });
     res.json({ count: events.length, events });
   });
   app.get("/admin/crm/export.csv", async (req, res) => {
-    const { tenant, type } = req.query;
-    const events = await listEvents({ tenantId: tenant, type, limit: 2000 });
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const { type } = req.query;
+    const events = await listEvents({ tenantId: scope.global ? undefined : scope.tenant, type, limit: 2000 });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=crm.csv");
     res.send("\uFEFF" + toCSV(events));
@@ -280,7 +321,9 @@ export function registerAdminRoutes(app) {
     res.json({ ok: true, due: due.length, sent });
   });
   app.get("/admin/inbox", async (req, res) => {
-    const inbox = await listInbox(req.query.tenant);
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const inbox = await listInbox(scope.global ? undefined : scope.tenant);
     res.json({ count: inbox.length, inbox });
   });
   app.get("/admin/inbox/:tenantId/:phone", async (req, res) => {
@@ -313,10 +356,10 @@ export function registerAdminRoutes(app) {
     }
   });
   app.get("/admin/", (req, res) => {
-    res.sendFile(path.join(__dirname, "admin.html"));
+    res.sendFile(ADMIN_HTML);
   });
   app.get("/portal/", (req, res) => {
-    res.sendFile(path.join(__dirname, "admin.html"));
+    res.sendFile(ADMIN_HTML);
   });
   app.get("/admin/inbox.html", (req, res) => {
     res.send(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>Inbox</title>
@@ -328,7 +371,10 @@ export function registerAdminRoutes(app) {
 async function load(){ const q=new URLSearchParams(location.search); const r=await fetch('/admin/inbox?tenant='+(q.get('tenant')||'')); const j=await r.json();
 const t=document.getElementById('t');
 j.inbox.forEach(c=>{ const tr=document.createElement('tr');
-tr.innerHTML='<td>'+c.tenantId+'</td><td>'+c.phone+'</td><td>'+(c.takeover?'⏸️':'✅')+'</td><td>'+(c.lastMessage?c.lastMessage.text:'')+'</td>';
+const td1=document.createElement('td'); td1.textContent=c.tenantId||''; tr.appendChild(td1);
+const td2=document.createElement('td'); td2.textContent=c.phone||''; tr.appendChild(td2);
+const td3=document.createElement('td'); td3.textContent=(c.takeover?'⏸️':'✅'); tr.appendChild(td3);
+const td4=document.createElement('td'); td4.textContent=(c.lastMessage?c.lastMessage.text:''); tr.appendChild(td4);
 const b=document.createElement('button'); b.textContent=c.takeover?'تشغيل البوت':'إيقاف للموظف';
 b.onclick=async()=>{ await fetch('/admin/takeover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenantId:c.tenantId,phone:c.phone,enabled:!c.takeover})}); load(); };
 const td=document.createElement('td'); td.appendChild(b); tr.appendChild(td); t.appendChild(tr); }); }
@@ -381,7 +427,9 @@ load();
     res.json({ ok: true, booking: b, offeredTo: offered });
   });
   app.get("/admin/waiting", async (req, res) => {
-    const list = await listWaiting(req.query.tenant, req.query.service);
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const list = await listWaiting(scope.global ? undefined : scope.tenant, req.query.service);
     res.json({ count: list.length, waiting: list });
   });
 }

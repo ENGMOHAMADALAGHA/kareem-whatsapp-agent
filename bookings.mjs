@@ -1,13 +1,28 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
+import crypto from "node:crypto";
+
+const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
 export async function bookAppointment({ tenantId, phone, name, service, day, slot }) {
-  const row = await tenantDb(tenantId).appointment.create({
-    data: {
-      id: `bk_${Date.now().toString(36)}`,
-      phone, name: name || phone, service, day, slot,
-    },
-  });
-  return rowToBooking(row);
+  // DB-level uniqueness (@@unique tenantId/day/slot) is the last line of defense.
+  // Map P2002 → clean SLOT_TAKEN error so callers can offer freeSlots().
+  try {
+    const row = await tenantDb(tenantId).appointment.create({
+      data: {
+        id: nid("bk"),
+        phone, name: name || phone, service, day, slot,
+      },
+    });
+    return rowToBooking(row);
+  } catch (e) {
+    if (e?.code === "P2002") {
+      const err = new Error("SLOT_TAKEN");
+      err.code = "SLOT_TAKEN";
+      err.meta = { tenantId, day, slot };
+      throw err;
+    }
+    throw e;
+  }
 }
 
 export async function listAppointments(tenantId) {
@@ -83,11 +98,12 @@ export async function freeSlots(tenantId, day, allSlots, capacity = 1) {
 }
 
 // قائمة الانتظار: حجوزات بحالة waiting (تُعبأ تلقائياً عند الإلغاء)
+// ملاحظة: slot فريد لكل صف حتى لا يتعارض مع @@unique(tenantId, day, slot)
 export async function joinWaitingList({ tenantId, phone, name, service }) {
   const row = await tenantDb(tenantId).appointment.create({
     data: {
-      id: `wt_${Date.now().toString(36)}`,
-      phone, name: name || phone, service, day: "انتظار", slot: "أول فرصة",
+      id: nid("wt"),
+      phone, name: name || phone, service, day: "انتظار", slot: `wl_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
       status: "waiting",
     },
   });
@@ -95,7 +111,8 @@ export async function joinWaitingList({ tenantId, phone, name, service }) {
 }
 
 export async function listWaiting(tenantId, service) {
-  const rows = await tenantDb(tenantId).appointment.findMany({
+  const T = tenantId ? tenantDb(tenantId) : systemDb("bookings:waiting-all");
+  const rows = await T.appointment.findMany({
     where: {
       status: "waiting",
       ...(service ? { service } : {}),

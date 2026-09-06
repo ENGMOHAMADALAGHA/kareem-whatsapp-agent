@@ -98,6 +98,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+// XSS guard: escape all server-controlled strings before injecting into HTML.
+const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 let cur = { tenant: "", phone: "" };
 let lastSeen = 0;
 const isPortal = location.pathname.startsWith("/portal");
@@ -184,7 +186,13 @@ async function loadInbox() {
   j.inbox.forEach((c) => {
     const d = document.createElement("div");
     d.className = "border rounded p-2 cursor-pointer hover:bg-slate-50" + (c.phone === cur.phone ? " border-blue-500" : "");
-    d.innerHTML = "<div class='font-bold'>" + c.phone + (c.takeover ? " ⏸️" : "") + "</div><div class='text-xs text-slate-500'>" + (c.lastMessage ? c.lastMessage.text : "") + "</div>";
+    const title = document.createElement("div");
+    title.className = "font-bold";
+    title.textContent = (c.phone || "") + (c.takeover ? " ⏸️" : "");
+    const sub = document.createElement("div");
+    sub.className = "text-xs text-slate-500";
+    sub.textContent = (c.lastMessage ? c.lastMessage.text : "");
+    d.append(title, sub);
     d.onclick = () => { cur.phone = c.phone; loadConv(); loadInbox(); };
     box.appendChild(d);
     if (c.updatedAt > lastSeen) {
@@ -211,7 +219,7 @@ async function loadConv() {
   j.messages.forEach((m) => {
     const d = document.createElement("div");
     d.className = "rounded p-2 max-w-[80%] text-sm " + (m.role === "user" ? "msg-user" : "msg-assistant");
-    d.textContent = m.text;
+    d.textContent = m.text ?? ""; // textContent only — never innerHTML for message bodies
     box.appendChild(d);
   });
   box.scrollTop = box.scrollHeight;
@@ -226,12 +234,24 @@ async function sendReply() {
 }
 
 async function loadOrders() {
-  const j = await api("/admin/orders?tenant=" + cur.tenant);
-  $("ordersList").innerHTML = j.orders.map((o) =>
-    "<div class='border rounded p-2 text-sm'><b>" + o.id + "</b> — " + o.phone + " — $" + o.total + " — " + o.status +
-    (o.proof ? " 📸 <span class='text-green-600'>لقطة مرفقة</span>" : "") +
-    ((o.status === "pending" || o.status === "proof_received") ? " <button class='text-green-600 text-xs font-bold' onclick=\"confirmOrder('" + o.id + "')\">✔ تأكيد الدفع</button>" : "") + "</div>"
-  ).join("") || "<p class='text-slate-400'>لا طلبات</p>";
+  const j = await api("/admin/orders?tenant=" + encodeURIComponent(cur.tenant));
+  const box = $("ordersList");
+  box.innerHTML = "";
+  if (!j.orders.length) { box.innerHTML = "<p class='text-slate-400'>لا طلبات</p>"; return; }
+  j.orders.forEach((o) => {
+    const d = document.createElement("div");
+    d.className = "border rounded p-2 text-sm";
+    const b = document.createElement("b"); b.textContent = o.id; d.appendChild(b);
+    d.appendChild(document.createTextNode(" — " + o.phone + " — $" + o.total + " — " + o.status));
+    if (o.proof) { const s = document.createElement("span"); s.className = "text-green-600"; s.textContent = " 📸 لقطة مرفقة"; d.appendChild(s); }
+    if (o.status === "pending" || o.status === "proof_received") {
+      const btn = document.createElement("button");
+      btn.className = "text-green-600 text-xs font-bold"; btn.textContent = " ✔ تأكيد الدفع";
+      btn.onclick = () => confirmOrder(o.id);
+      d.appendChild(document.createTextNode(" ")); d.appendChild(btn);
+    }
+    box.appendChild(d);
+  });
 }
 
 async function confirmOrder(id) {
@@ -241,11 +261,23 @@ async function confirmOrder(id) {
 }
 
 async function loadBooking() {
-  const j = await api("/admin/appointments?tenant=" + cur.tenant);
-  $("bookingList").innerHTML = j.appointments.map((b) =>
-    "<div class='border rounded p-2 text-sm'><b>" + b.id + "</b> — " + b.phone + " — " + (b.service || "") + " " + (b.slot || "") + " — " + b.status +
-    (b.status === "confirmed" ? " <button class='text-red-500 text-xs' onclick=\"cancelBk('" + b.id + "')\">إلغاء</button>" : "") + "</div>"
-  ).join("") || "<p class='text-slate-400'>لا حجوزات</p>";
+  const j = await api("/admin/appointments?tenant=" + encodeURIComponent(cur.tenant));
+  const box = $("bookingList");
+  box.innerHTML = "";
+  if (!j.appointments.length) { box.innerHTML = "<p class='text-slate-400'>لا حجوزات</p>"; return; }
+  j.appointments.forEach((b) => {
+    const d = document.createElement("div");
+    d.className = "border rounded p-2 text-sm";
+    const bold = document.createElement("b"); bold.textContent = b.id; d.appendChild(bold);
+    d.appendChild(document.createTextNode(" — " + (b.phone || "") + " — " + (b.service || "") + " " + (b.slot || "") + " — " + (b.status || "")));
+    if (b.status === "confirmed") {
+      const btn = document.createElement("button");
+      btn.className = "text-red-500 text-xs"; btn.textContent = " إلغاء";
+      btn.onclick = () => cancelBk(b.id);
+      d.appendChild(document.createTextNode(" ")); d.appendChild(btn);
+    }
+    box.appendChild(d);
+  });
 }
 
 async function cancelBk(id) {
@@ -254,40 +286,66 @@ async function cancelBk(id) {
 }
 
 async function loadCsat() {
-  const j = await api("/admin/csat?tenant=" + cur.tenant);
+  const j = await api("/admin/csat?tenant=" + encodeURIComponent(cur.tenant));
   let bars = "";
   for (let s = 5; s >= 1; s--) {
-    const n = (j.dist && j.dist[s]) || 0;
-    const pct = j.count ? Math.round((n / j.count) * 100) : 0;
+    const n = Number((j.dist && j.dist[s]) || 0);
+    const total = Number(j.count || 0);
+    const pct = total ? Math.round((n / total) * 100) : 0;
     bars += "<div class='flex items-center gap-2 text-sm'><span class='w-8'>" + s + "⭐</span><div class='flex-1 bg-slate-200 rounded'><div class='bg-yellow-400 rounded' style='width:" + pct + "%;height:12px'></div></div><span class='w-10'>" + n + "</span></div>";
   }
-  $("csatStats").innerHTML = "<div class='mb-2'>المتوسط: <b>" + (j.avg || "—") + "</b> من " + j.count + " تقييم</div>" + bars;
+  $("csatStats").innerHTML = "<div class='mb-2'>المتوسط: <b>" + esc(j.avg || "—") + "</b> من " + Number(j.count || 0) + " تقييم</div>" + bars;
 }
 
 async function loadBc() {
-  const j = await api("/admin/broadcasts?tenant=" + cur.tenant);
+  const j = await api("/admin/broadcasts?tenant=" + encodeURIComponent(cur.tenant));
   $("bcList").innerHTML = j.broadcasts.map((b) =>
-    "<div class='border rounded p-2 text-xs'>" + b.id + " — " + b.phones.length + " رقم — " + b.createdAt + "</div>"
+    "<div class='border rounded p-2 text-xs'>" + esc(b.id) + " — " + Number((b.phones || []).length) + " رقم — " + esc(b.createdAt) + "</div>"
   ).join("");
 }
 
 async function loadReport() {
-  const j = await api("/admin/report?tenant=" + cur.tenant);
-  $("reportBox").innerHTML =
-    "<div class='p-3 rounded bg-green-50 border'>" + j.message + "</div>" +
-    "<div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-center'>" +
-    "<div class='border rounded p-2'><div class='text-xl font-bold'>" + j.messagesHandled + "</div><div class='text-xs'>رسالة</div></div>" +
-    "<div class='border rounded p-2'><div class='text-xl font-bold'>$" + j.orders.revenue + "</div><div class='text-xs'>مدفوعات (" + j.orders.paid + "/" + j.orders.count + ")</div></div>" +
-    "<div class='border rounded p-2'><div class='text-xl font-bold'>" + j.bookings + "</div><div class='text-xs'>حجوزات</div></div>" +
-    "<div class='border rounded p-2'><div class='text-xl font-bold'>" + (j.csat.avg || "—") + "</div><div class='text-xs'>تقييم (" + j.csat.count + ")</div></div>" +
-    "</div><div class='text-sm'>⏱ ساعات موظفين موفرة: <b>" + j.staffHoursSaved + "</b> — 📢 بث: " + j.broadcasts + "</div>";
+  const j = await api("/admin/report?tenant=" + encodeURIComponent(cur.tenant));
+  const msg = document.createElement("div");
+  msg.className = "p-3 rounded bg-green-50 border";
+  msg.textContent = j.message || "";
+  const box = $("reportBox");
+  box.innerHTML = "";
+  box.appendChild(msg);
+  const grid = document.createElement("div");
+  grid.className = "grid grid-cols-2 md:grid-cols-4 gap-2 text-center";
+  const stats = [
+    [Number(j.messagesHandled || 0), "رسالة"],
+    ["$" + Number(j.orders?.revenue || 0), "مدفوعات (" + Number(j.orders?.paid || 0) + "/" + Number(j.orders?.count || 0) + ")"],
+    [Number(j.bookings || 0), "حجوزات"],
+    [j.csat?.avg ?? "—", "تقييم (" + Number(j.csat?.count || 0) + ")"],
+  ];
+  stats.forEach(([v, l]) => {
+    const cell = document.createElement("div");
+    cell.className = "border rounded p-2";
+    const big = document.createElement("div");
+    big.className = "text-xl font-bold"; big.textContent = String(v);
+    const lab = document.createElement("div");
+    lab.className = "text-xs"; lab.textContent = l;
+    cell.append(big, lab); grid.appendChild(cell);
+  });
+  box.appendChild(grid);
+  const foot = document.createElement("div");
+  foot.className = "text-sm";
+  foot.textContent = "⏱ ساعات موظفين موفرة: " + Number(j.staffHoursSaved || 0) + " — 📢 بث: " + Number(j.broadcasts || 0);
+  box.appendChild(foot);
 }
 
 async function loadCrm() {
-  const j = await api("/admin/crm?tenant=" + cur.tenant + "&limit=50");
-  $("crmList").innerHTML = j.events.map((e) =>
-    "<div class='border-b py-1'>[" + e.type + "] " + (e.phone || "") + " " + (e.intent || "") + " <span class='text-slate-400'>" + e.at + "</span></div>"
-  ).join("");
+  const j = await api("/admin/crm?tenant=" + encodeURIComponent(cur.tenant) + "&limit=50");
+  const box = $("crmList");
+  box.innerHTML = "";
+  j.events.forEach((e) => {
+    const d = document.createElement("div");
+    d.className = "border-b py-1";
+    d.textContent = "[" + (e.type || "") + "] " + (e.phone || "") + " " + (e.intent || "") + " " + (e.at || "");
+    box.appendChild(d);
+  });
 }
 
 function refreshAll() {

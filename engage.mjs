@@ -1,10 +1,13 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
+import crypto from "node:crypto";
 import { storeGet, storeSet, storeDel } from "./store.mjs";
+
+const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
 // ── Broadcast ──
 export async function saveBroadcast({ tenantId, text, phones, results }) {
   const rec = {
-    id: `bc_${Date.now().toString(36)}`,
+    id: nid("bc"),
     tenantId, text: (text || "").slice(0, 500),
     phones, results,
     createdAt: new Date().toISOString(),
@@ -43,7 +46,7 @@ async function clearPendingCsat(tenantId, phone) {
 }
 export async function saveRating({ tenantId, phone, score, refId }) {
   const r = {
-    id: `cs_${Date.now().toString(36)}`,
+    id: nid("cs"),
     tenantId, phone, score, refId: refId || null,
     createdAt: new Date().toISOString(),
   };

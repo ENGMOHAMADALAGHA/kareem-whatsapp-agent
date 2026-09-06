@@ -27,11 +27,17 @@ export const adminAuth = async (req, res, next) => {
     }
   }
   // 2) سوبر أدمن؟
-  if (ADMIN_USER && ADMIN_PASS && scheme === "Basic" && encoded) {
+  if (scheme === "Basic" && encoded) {
+    if (!ADMIN_USER || !ADMIN_PASS) {
+      // Fail-closed: missing credentials = deny, never bypass.
+      return res.status(503).json({ ok: false, error: "إعدادات المدير ناقصة (ADMIN_USER/ADMIN_PASS)" });
+    }
     const [u, pass] = Buffer.from(encoded, "base64").toString().split(":");
-    if (u === ADMIN_USER && pass === ADMIN_PASS) return next();
+    if (u === ADMIN_USER && pass === ADMIN_PASS) {
+      req.isSuperAdmin = true;
+      return next();
+    }
   }
-  if (!ADMIN_USER || !ADMIN_PASS) return next(); // بدون إعداد = مفتوح (للتطوير المحلي فقط)
   res.setHeader("WWW-Authenticate", 'Basic realm="admin"');
   return res.status(401).json({ ok: false, error: "مطلوب تسجيل دخول المدير" });
 };
@@ -39,8 +45,9 @@ export const adminAuth = async (req, res, next) => {
 // يتطلب META_APP_SECRET + rawBody (يُحفظ عبر express.json verify في app.mjs)
 export function verifyMetaSignature(req, res, next) {
   if (!META_APP_SECRET) {
-    console.warn("  ⚠️ META_APP_SECRET غير مضبوط — التحقق من التوقيع معطّل (للتطوير فقط)");
-    return next();
+    // Fail-closed: never accept unsigned webhooks when secret is missing.
+    console.error("  ❌ META_APP_SECRET غير مضبوط — رفض webhook (fail-closed)");
+    return res.sendStatus(403);
   }
   const sig = req.headers["x-hub-signature-256"] || "";
   if (!sig.startsWith("sha256=") || !req.rawBody) {
