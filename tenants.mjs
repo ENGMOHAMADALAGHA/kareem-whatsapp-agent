@@ -50,8 +50,13 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
   const envVerify = process.env.WEBHOOK_VERIFY_TOKEN || "my_secret_token";
 
   if (phoneNumberId) {
-    const hit = tenants.find((t) => (t.phoneNumberId || envPhoneId) === phoneNumberId);
-    if (hit) return withEnvDefaults(hit);
+    // أولاً: مطابقة صريحة (بوت عنده رقمه الخاص)
+    const exact = tenants.find((t) => t.phoneNumberId && t.phoneNumberId === phoneNumberId);
+    if (exact) return withEnvDefaults(exact);
+    // ثانياً: الافتراضي (كريم) عند تطابق رقم البيئة المشترك
+    const def = tenants.find((t) => t.id === "kareem-sport" && (t.phoneNumberId || envPhoneId) === phoneNumberId)
+      || tenants.find((t) => (t.phoneNumberId || envPhoneId) === phoneNumberId);
+    if (def) return withEnvDefaults(def);
   }
   if (verifyToken) {
     const hit = tenants.find((t) => (t.verifyToken || envVerify) === verifyToken);
