@@ -53,13 +53,13 @@ export async function cancelAppointment(id) {
   return rowToBooking(row);
 }
 
-// حالة الحجز المؤقتة في الذاكرة (لكل tenant::phone)
-const states = new Map();
-export function getBookingState(tenantId, phone) {
-  return states.get(`${tenantId}::${phone}`) || null;
+// حالة الحجز المؤقتة — دائمة في DB (لا تضيع عند restart)
+import { storeGet, storeSet, storeDel } from "./store.mjs";
+const bkKey = (tenantId, phone) => `booking:${tenantId}::${phone}`;
+export async function getBookingState(tenantId, phone) {
+  return storeGet(bkKey(tenantId, phone));
 }
-export function setBookingState(tenantId, phone, state) {
-  const k = `${tenantId}::${phone}`;
-  if (!state) states.delete(k);
-  else states.set(k, { ...state, updatedAt: Date.now() });
+export async function setBookingState(tenantId, phone, state) {
+  if (!state) return storeDel(bkKey(tenantId, phone));
+  return storeSet(bkKey(tenantId, phone), { ...state, updatedAt: Date.now() }, 24 * 60 * 60 * 1000);
 }

@@ -1,6 +1,6 @@
 # خريطة عمل مشروع كريم - AI Sales Agent
 
-> وثيقة مرجعية شاملة لكل خطوة تم تنفيذها - من الصفر حتى Multi-Tenant + أسابيع 1-4
+> وثيقة مرجعية شاملة لكل خطوة تم تنفيذها - من الصفر حتى Supabase + Prisma + بوابة العملاء
 
 ## 1. نظرة عامة
 - **الاسم:** كريم - وكيل مبيعات ذكي لمتجر مستلزمات رياضية (+ ليان لعيادة الأسنان)
@@ -18,37 +18,51 @@
 whatsapp-ai-agent/
 ├── agent.mjs          # منطق البوتات + Webhook + Admin + AI + Mock
 ├── server.mjs         # wrapper للسيرفر (يستدعي agent.mjs)
-├── tenants.mjs        # إدارة البوتات (حل tenant + عزل + بناء Prompt)
-├── tenants.json       # إعدادات البوتات (kareem-sport + agha-dental)
-├── bookings.mjs       # حجوزات العيادات + تذكير
-├── appointments.json  # سجل الحجوزات
+├── db.mjs             # اتصال Prisma + Singleton
+├── tenants.mjs        # إدارة البوتات (حل tenant + عزل + بناء Prompt) - DB فقط
+├── bookings.mjs       # حجوزات العيادات + تذكير - DB فقط
 ├── voice.mjs          # تحميل الفويس من واتساب + تفريغ Gemini
-├── orders.mjs         # طلبات + روابط دفع + سلة مهجورة
-├── orders.json        # سجل الطلبات
-├── crm.mjs            # سجل أحداث CRM + webhook خارجي + CSV
-├── crm.json           # سجل الأحداث
-├── engage.mjs         # بث Broadcast + تقييم CSAT
-├── broadcasts.json    # سجل البثات
-├── csat.json          # سجل التقييمات
+├── orders.mjs         # طلبات + روابط دفع + سلة مهجورة - DB فقط
+├── crm.mjs            # سجل أحداث CRM + webhook خارجي + CSV - DB فقط
+├── engage.mjs         # بث Broadcast + تقييم CSAT - DB فقط
+├── portal.mjs         # حسابات العملاء + JWT + نسيت كلمة السر
+├── admin.html         # لوحة التحكم المرئية + صفحة دخول العميل
+├── prisma/
+│   ├── schema.prisma  # 8 جداول: tenants/messages/orders/appointments/ratings/broadcasts/events/tenant_users
+│   └── seed.mjs       # بذر البوتات الافتراضية
+├── prisma.config.ts   # إعداد Prisma 7 (رابط DB من Env)
 ├── package.json       # type:module + dependencies
 ├── .env               # متغيرات بيئة (لا يُرفع)
 ├── .env.example       # قالب للمتغيرات
 ├── .gitignore
 ├── WORK_MAP.md        # هذه الوثيقة
+├── BOT_SUMMARY.md     # ملخص للدكتور (+ PDF)
 ├── RDP_DEPLOY.md      # خطوات النقل على RDP خاص
 └── .github/workflows/keep-alive.yml  # يصحي Render كل 10د
 ```
+> ملفات JSON المحلية (tenants/orders/...) **حُذفت نهائياً** — التخزين الآن Supabase فقط.
 
 ### package.json
 ```json
 {
   "type": "module",
-  "scripts": { "start": "node server.mjs", "test": "node agent.mjs --test" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node agent.mjs --test",
+    "postinstall": "prisma generate",
+    "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script"
+  },
   "dependencies": {
     "@google/genai": "^1.0.0",
-    "openai": "^4.104.0",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "bcryptjs": "...",
     "dotenv": "^16.4.5",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "jsonwebtoken": "...",
+    "openai": "^4.104.0",
+    "pg": "^8.23.0",
+    "prisma": "^7.10.0"
   }
 }
 ```
@@ -73,11 +87,17 @@ PUBLIC_BASE_URL=https://kareem-whatsapp-agent.onrender.com
 CRM_WEBHOOK_URL= (اختياري - Sheets عبر Make/n8n)
 ADMIN_USER=admin
 ADMIN_PASS=<كلمة قوية>
+JWT_SECRET=<نص عشوائي طويل لجلسات العملاء>
 VOICE_TIMEOUT_MS=15000
 VOICE_MAX_MB=8
 REMIND_EVERY_MS=300000
 REMIND_AFTER_MIN=60
 CART_AFTER_MIN=60
+
+# ── قاعدة البيانات Supabase (إجباري في الإنتاج) ──
+# أنشئ مشروعاً مجانياً في supabase.com ثم:
+DATABASE_URL=postgresql://postgres.<ref>:<pass>@aws-1-<region>.pooler.supabase.com:6543/postgres
+# ملاحظة: استخدم الـ pooler (منفذ 6543) لأن الاتصال المباشر IPv6 فقط
 ```
 
 - **Render:** نفس المتغيرات في Dashboard → Environment
@@ -106,15 +126,17 @@ CART_AFTER_MIN=60
 
 ### الدوال الأساسية
 - `mockReply(msg)` - محاكاة محلية
-- `getKareemReply(msg, phone, tenant)` / `processCustomerMessage` - AI مع ذاكرة معزولة `tenant::phone` (6 ساعات، 10 رسائل)
+- `getKareemReply(msg, phone, tenant)` / `processCustomerMessage` - AI مع ذاكرة معزولة `tenant::phone` (كاش + Postgres)
 - `sendWhatsAppMessage(to, text, tenant)` + `sendButtons` + `sendImage` - لكل بوت توكنه الخاص
-- `resolveTenant({phoneNumberId / verifyToken})` - حل البوت من رقم المستقبل
+- `resolveTenant({phoneNumberId / verifyToken})` - مطابقة صريحة أولاً ثم كريم الافتراضي (async + كاش 60ث)
 - `buildSystemPrompt(tenant)` - Prompt مبني من منتجات كل بوت
 - `downloadWhatsAppMedia` + `transcribeAudio` - فويس (مهلة 15ث + حد 8MB + إعادة محاولة + موديل بديل)
 - `createOrder` + `createPaymentLink` - طلبات + Stripe أو رابط محلي `/pay/:id`
 - `bookAppointment` + `dueReminders` - حجوزات + تذكير تلقائي كل 5د
 - `logEvent` - كل حدث (message/order/booking/csat/...) + webhook خارجي اختياري
 - Inbox: `listInbox` + `setTakeover`/`isTakeover` - إيقاف البوت لتدخل بشري
+- Portal (`portal.mjs`): `createClientUser` + `verifyClientUser` (bcrypt) + `signClientToken`/`verifyClientToken` (JWT 30 يوم) + `startPasswordReset`/`finishPasswordReset` (كود واتساب 6 أرقام/15د)
+- DB (`db.mjs`): Prisma Singleton + `pruneOldMessages`
 
 ### Endpoints
 ```
@@ -141,8 +163,16 @@ POST /admin/broadcast                   → بث جماعي (🔒)
 GET  /admin/broadcasts                  → سجل البثات (🔒)
 POST /admin/csat-request                → طلب تقييم (🔒)
 GET  /admin/csat?tenant=                → إحصائيات التقييم (🔒)
+GET  /admin/report?tenant=&days=        → تقرير التوفير (رسائل/إيرادات/تقييم/ساعات) (🔒)
+PATCH /admin/tenants/:id                → تحديث بوت + Kill switch (🔒 سوبر فقط)
+POST /admin/users                       → إنشاء حساب عميل (🔒 سوبر فقط)
+GET  /admin/users?tenant=               → قائمة حسابات العملاء (🔒 سوبر فقط)
+GET  /admin/   +  GET /portal/          → لوحة التحكم المرئية (تبويبات + تحديث كل 4ث)
+POST /portal/login                      → دخول العميل (JWT) (عام)
+POST /portal/forgot                     → كود واتساب لإعادة التعيين (عام)
+POST /portal/reset                      → تعيين كلمة سر جديدة (عام)
 ```
-(🔒 = محمي بـ Basic Auth عبر `ADMIN_USER`/`ADMIN_PASS`)
+(🔒 = محمي بـ Basic Auth (سوبر) أو JWT (عميل مقفل على بوته فقط))
 
 ### الاختبارات
 - 8 حالات في `runTests()` - التشغيل: `node agent.mjs --test` أو `npm test`
@@ -173,7 +203,11 @@ graph TD
   R --> S[19. أسبوع3: سلة مهجورة + CRM]
   S --> T[20. أسبوع4: Broadcast + CSAT]
   T --> U[21. حماية admin + تقوية فويس + منع الرد المكرر]
-  U --> V[22. واتساب: +1 555 667-6129 ↔ +962790362429]
+  U --> V[22. Supabase + ترحيل كامل من JSON]
+  V --> W[23. Prisma ORM + حذف JSON + seed]
+  W --> X[24. Dashboard + وين طلبي + تقرير التوفير]
+  X --> Y[25. بوابة العميل: حسابات + JWT + نسيت كلمة السر + Kill switch]
+  Y --> Z[26. واتساب: +1 555 667-6129 ↔ +962790362429]
 ```
 
 ### سجل الـ Commits المهمة
@@ -192,6 +226,11 @@ graph TD
 | `1679e71` | حماية /admin |
 | `30af044` | تقوية الفويس |
 | `64b87cd` | منع الرد المكرر (200 فوري + wamid) |
+| `680d3f9` | ترحيل PostgreSQL مع fallback |
+| `e5fcdb3` | Prisma ORM + حذف JSON نهائياً |
+| `b34ccc7` | أولوية المطابقة الصريحة للبوتات |
+| `0584bf0` | Dashboard + وين طلبي + تقرير التوفير |
+| `c1808db` | بوابة العميل + JWT + Kill switch |
 
 ---
 
@@ -263,6 +302,11 @@ git add . && git commit -m "msg" && git push origin main
 | `البوت يرد مرتين نفس الرد` | Meta يعيد الإرسال عند تأخر الـ 200 | رد 200 فوري + معالجة خلفية + تجاهل `wamid` المكرر |
 | `401 على /admin` | بدون Basic Auth | ضع `ADMIN_USER`/`ADMIN_PASS` في Render Env |
 | `Recipient not in allowed list (131030)` | رقم مش مسجل تجريبياً | أضفه في Meta → المستلم أو وثّق رقم حقيقي |
+| `Prisma P1012: url no longer supported` | Prisma 7 غيّر الإعداد | الرابط في `prisma.config.ts` وليس الـ schema |
+| `PrismaClient needs adapter` | Prisma 7 يتطلب driver | `PrismaPg` من `@prisma/adapter-pg` |
+| `Can't reach DB / ENOTFOUND (Supabase)` | الاتصال المباشر IPv6 فقط | استخدم الـ pooler (`aws-1-...:6543`) |
+| `tenant/user not found (pooler)` | عنوان الـ pooler غلط | جلب الصحيح من API: `/config/database/pooler` |
+| `42P10 ON CONFLICT` | جدول ناقصه UNIQUE | `CREATE UNIQUE INDEX` يدوياً |
 
 ---
 
@@ -287,12 +331,17 @@ curl https://kareem-whatsapp-agent.onrender.com/
 
 ## 12. الباقي (خارطة الطريق)
 
+- [x] Dashboard مرئية (`/admin/` + `/portal/`)
+- [x] بوابة العميل + Kill switch
 - [ ] `STRIPE_SECRET_KEY` في Render → دفع حقيقي
 - [ ] `CRM_WEBHOOK_URL` → Google Sheets
 - [ ] توثيق Meta + رقم حقيقي (بدل التجريبي)
-- [ ] Dashboard مرئية تجمع `/admin/*`
+- [ ] نقل Takeover/حالة الحجز/CSAT المعلق إلى DB (هلا في الذاكرة فقط)
+- [ ] Redis + BullMQ (عند الحمل العالي)
+- [ ] Triage العيادة + قائمة الانتظار
+- [ ] Tap للدفع المحلي (يحتاج سجل تجاري)
 - [ ] قاعدة معرفة RAG + قوالب Meta المعتمدة + إشعار موظف فوري
-- [ ] تسعير Sub-contract ($29/$59) + RDP خاص
+- [ ] اختبار حمل + Render Pro/RDP + تسعير Sub-contract
 
 ---
 
@@ -307,4 +356,4 @@ curl https://kareem-whatsapp-agent.onrender.com/
 
 ---
 
-*آخر تحديث: 2026-09-05 - يشمل كل Commits حتى منع الرد المكرر (`64b87cd`)*
+*آخر تحديث: 2026-09-06 - يشمل كل Commits حتى بوابة العميل (`c1808db`)*

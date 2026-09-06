@@ -28,21 +28,18 @@ export async function listBroadcasts(tenantId) {
   }));
 }
 
-// ── CSAT ──
-const pending = new Map(); // tenant::phone -> {refId, at}
-const keyOf = (t, p) => `${t}::${p}`;
+// ── CSAT ── (طلبات التقييم المعلقة — دائمة في DB)
+import { storeGet, storeSet, storeDel } from "./store.mjs";
+const csatKey = (t, p) => `csat:${t}::${p}`;
 
-export function requestCsat(tenantId, phone, refId) {
-  pending.set(keyOf(tenantId, phone), { refId: refId || null, at: Date.now() });
+export async function requestCsat(tenantId, phone, refId) {
+  return storeSet(csatKey(tenantId, phone), { refId: refId || null, at: Date.now() }, 24 * 60 * 60 * 1000);
 }
-export function hasPendingCsat(tenantId, phone) {
-  const s = pending.get(keyOf(tenantId, phone));
-  if (!s) return null;
-  if (Date.now() - s.at > 24 * 60 * 60 * 1000) {
-    pending.delete(keyOf(tenantId, phone));
-    return null;
-  }
-  return s;
+export async function hasPendingCsat(tenantId, phone) {
+  return storeGet(csatKey(tenantId, phone));
+}
+async function clearPendingCsat(tenantId, phone) {
+  return storeDel(csatKey(tenantId, phone));
 }
 export async function saveRating({ tenantId, phone, score, refId }) {
   const r = {
@@ -53,7 +50,7 @@ export async function saveRating({ tenantId, phone, score, refId }) {
   await db().rating.create({
     data: { id: r.id, tenantId, phone, score, refId: refId || null },
   });
-  pending.delete(keyOf(tenantId, phone));
+  await clearPendingCsat(tenantId, phone);
   return r;
 }
 

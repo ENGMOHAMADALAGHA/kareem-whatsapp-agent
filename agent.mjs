@@ -310,58 +310,45 @@ export function getMemoryStats() {
 }
 
 // ── Inbox: عرض المحادثات + Takeover (إيقاف البوت مؤقتاً لتدخل بشري) ──
-const takeoverMap = new Map(); // key tenant::phone -> {by, at}
-export function setTakeover(tenantId, phone, enabled, by = "admin") {
-  const key = memoryKey(tenantId, phone);
-  if (enabled) takeoverMap.set(key, { by, at: Date.now() });
-  else takeoverMap.delete(key);
+// Takeover دائم في DB (لا يضيع عند restart)
+import { storeGet, storeSet, storeDel } from "./store.mjs";
+const takeoverKey = (tenantId, phone) => `takeover:${memoryKey(tenantId, phone)}`;
+export async function setTakeover(tenantId, phone, enabled, by = "admin") {
+  if (enabled) await storeSet(takeoverKey(tenantId, phone), { by, at: Date.now() });
+  else await storeDel(takeoverKey(tenantId, phone));
 }
-export function isTakeover(tenantId, phone) {
-  return takeoverMap.has(memoryKey(tenantId, phone));
+export async function isTakeover(tenantId, phone) {
+  return !!(await storeGet(takeoverKey(tenantId, phone)));
 }
 export async function listInbox(tenantFilter) {
-  // مع DB: آخر رسالة لكل محادثة من آخر 30 يوم
-  if (isDbEnabled()) {
-    try {
-      const { db } = await import("./db.mjs");
-      const r = tenantFilter
-        ? await db().query(
-            `SELECT DISTINCT ON (phone) tenant_id, phone, role, text, created_at FROM messages WHERE tenant_id=$1 ORDER BY phone, created_at DESC`,
-            [tenantFilter]
-          )
-        : await db().query(
-            `SELECT DISTINCT ON (tenant_id, phone) tenant_id, phone, role, text, created_at FROM messages ORDER BY tenant_id, phone, created_at DESC LIMIT 200`
-          );
-      return r.rows.map((row) => ({
-        tenantId: row.tenant_id,
-        phone: row.phone,
-        count: null,
-        updatedAt: new Date(row.created_at).getTime(),
-        takeover: takeoverMap.has(memoryKey(row.tenant_id, row.phone)),
-        lastMessage: { role: row.role, text: (row.text || "").slice(0, 120) },
-      }));
-    } catch (e) {
-      console.error(`  ⚠️ فشل Inbox من DB: ${e.message}`);
-    }
-  }
-  const out = [];
-  for (const [key, entry] of conversations.entries()) {
-    const sep = key.indexOf("::");
-    const tenantId = sep > 0 ? key.slice(0, sep) : "kareem-sport";
-    const phone = sep > 0 ? key.slice(sep + 2) : key;
-    if (tenantFilter && tenantId !== tenantFilter) continue;
-    const last = entry.messages[entry.messages.length - 1];
-    out.push({
-      tenantId,
-      phone,
-      count: entry.messages.length,
-      updatedAt: entry.updatedAt,
-      takeover: takeoverMap.has(key),
-      lastMessage: last ? { role: last.role, text: last.text.slice(0, 120) } : null,
+  try {
+    const rows = await db().message.groupBy({
+      by: ["tenantId", "phone"],
+      where: tenantFilter ? { tenantId: tenantFilter } : undefined,
+      _max: { createdAt: true },
+      _count: { _all: true },
     });
+    const out = [];
+    for (const g of rows.slice(0, 200)) {
+      const last = await db().message.findFirst({
+        where: { tenantId: g.tenantId, phone: g.phone },
+        orderBy: { createdAt: "desc" },
+      });
+      out.push({
+        tenantId: g.tenantId,
+        phone: g.phone,
+        count: g._count._all,
+        updatedAt: new Date(g._max.createdAt).getTime(),
+        takeover: await isTakeover(g.tenantId, g.phone),
+        lastMessage: last ? { role: last.role, text: (last.text || "").slice(0, 120) } : null,
+      });
+    }
+    out.sort((a, b) => b.updatedAt - a.updatedAt);
+    return out;
+  } catch (e) {
+    console.error(`  ⚠️ فشل Inbox: ${e.message}`);
+    return [];
   }
-  out.sort((a, b) => b.updatedAt - a.updatedAt);
-  return out;
 }
 export async function getConversation(tenantId, phone) {
   const msgs = await getHistory(phone, { id: tenantId });
@@ -807,7 +794,7 @@ export function createApp() {
       const tenant = await getTenantFull(order.tenantId);
       if (tenant) {
         const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
-        requestCsat(order.tenantId, order.phone, order.id);
+        await requestCsat(order.tenantId, order.phone, order.id);
         try {
           await sendWhatsAppMessage(order.phone, msg, tenant);
           await pushHistory(order.phone, "assistant", msg, tenant);
@@ -885,7 +872,7 @@ export function createApp() {
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     const msg = `شكراً لتعاملك معنا يا غالي! 🙏 قيّم تجربتك من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
-    requestCsat(tenantId, phone, null);
+    await requestCsat(tenantId, phone, null);
     try {
       await sendWhatsAppMessage(phone, msg, tenant);
       await pushHistory(phone, "assistant", msg, tenant);
@@ -944,18 +931,18 @@ export function createApp() {
     const { phone } = req.params;
     res.json({
       tenantId, phone,
-      takeover: isTakeover(tenantId, phone),
+      takeover: await isTakeover(tenantId, phone),
       messages: await getConversation(tenantId, phone),
     });
   });
 
   // ── Takeover: إيقاف/تشغيل البوت لمحادثة ──
-  app.post("/admin/takeover", (req, res) => {
+  app.post("/admin/takeover", async (req, res) => {
     const { tenantId, phone, enabled, by } = req.body || {};
     if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
-    setTakeover(tenantId, phone, !!enabled, by);
+    await setTakeover(tenantId, phone, !!enabled, by);
     logEvent(!!enabled ? "takeover" : "handover", { tenantId, phone, by }).catch(() => {});
-    res.json({ ok: true, takeover: isTakeover(tenantId, phone) });
+    res.json({ ok: true, takeover: await isTakeover(tenantId, phone) });
   });
 
   // ── إرسال يدوي من الموظف (مع حفظ في الذاكرة) ──
@@ -1122,7 +1109,7 @@ load();
             console.log(`  🏢 tenant=${tenant?.id} | بوت=${tenant?.botName}`);
             console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"${buttonId ? ` [btn=${buttonId}]` : ""}`);
             console.log(`  🧠 الذاكرة: ${(await getHistory(from, tenant)).length} رسائل سابقة`);
-            if (isTakeover(tenant?.id, from)) {
+            if (await isTakeover(tenant?.id, from)) {
               await pushHistory(from, "user", text, tenant);
               console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);
               console.log(`${"─".repeat(60)}\n`);
@@ -1156,7 +1143,7 @@ load();
 
             // —— CSAT: إذا الرد رقم 1-5 وكان في طلب تقييم معلق ——
             if (/^[1-5]$/.test(text.trim())) {
-              const pending = hasPendingCsat(tenant?.id, from);
+              const pending = await hasPendingCsat(tenant?.id, from);
               if (pending) {
                 const score = Number(text.trim());
                 const rating = await saveRating({ tenantId: tenant.id, phone: from, score, refId: pending.refId });
@@ -1179,7 +1166,7 @@ load();
 
             // —— تدفق الحجز (للعيادات) قبل الـ AI ——
             const wantsBooking = tenant?.features?.booking && /(حجز|موعد|احجز|book|appointment)/i.test(text + " " + (buttonId || ""));
-            const bookingState = getBookingState(tenant?.id, from);
+            const bookingState = await getBookingState(tenant?.id, from);
             let result = null;
             let handled = false;
 
@@ -1206,7 +1193,7 @@ load();
             // 2) بدء الحجز
             if (wantsBooking && !bookingState) {
               const slots = (tenant.features.bookingSlots || []).join("، ");
-              setBookingState(tenant.id, from, { step: "slot" });
+              await setBookingState(tenant.id, from, { step: "slot" });
               const reply = `تمام يا غالي 😊 احجز موعدك في ${tenant.name}. أوقاتنا: ${tenant.features.workingHours || ""}. اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00) واسم الخدمة.`;
               result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
               await pushHistory(from, "user", text, tenant);
@@ -1228,7 +1215,7 @@ load();
                 const slot = slotMatch[1];
                 const service = (tenant.products || [])[0]?.name || "موعد";
                 const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day: "أقرب يوم متاح", slot });
-                setBookingState(tenant.id, from, null);
+                await setBookingState(tenant.id, from, null);
                 const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
                 result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
                 await pushHistory(from, "user", text, tenant);
