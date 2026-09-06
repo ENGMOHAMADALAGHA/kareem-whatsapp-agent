@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
+    "dev:ui": "node scripts/dev-ui.mjs",
     "test": "node agent.mjs --test",
     "postinstall": "prisma generate",
     "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script"
