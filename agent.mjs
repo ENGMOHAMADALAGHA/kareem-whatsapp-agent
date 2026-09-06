@@ -264,8 +264,9 @@ async function getHistory(phone, tenantInput) {
   }
   // عند غياب الكاش (مثلاً بعد restart) حمّل من Postgres
   try {
-    const rows = await db().message.findMany({
-      where: { tenantId: tenant?.id, phone },
+    const { tenantDb } = await import("./src/security/tenantGuard.mjs");
+    const rows = await tenantDb(tenant?.id).message.findMany({
+      where: { phone },
       orderBy: { createdAt: "desc" },
       take: MAX_HISTORY,
     });
@@ -293,8 +294,9 @@ async function pushHistory(phone, role, text, tenantInput) {
   entry.updatedAt = Date.now();
   // حفظ دائم في Postgres (لا يضيع عند restart)
   try {
-    await db().message.create({
-      data: { tenantId: tenant?.id, phone, role, text },
+    const { tenantDb } = await import("./src/security/tenantGuard.mjs");
+    await tenantDb(tenant?.id).message.create({
+      data: { phone, role, text },
     });
   } catch (e) {
     console.error(`  ⚠️ فشل حفظ الرسالة: ${e.message}`);
@@ -328,16 +330,17 @@ export async function isTakeover(tenantId, phone) {
 }
 export async function listInbox(tenantFilter) {
   try {
-    const rows = await db().message.groupBy({
+    const { tenantDb, systemDb } = await import("./src/security/tenantGuard.mjs");
+    const T = tenantFilter ? tenantDb(tenantFilter) : systemDb("inbox:global");
+    const rows = await T.message.groupBy({
       by: ["tenantId", "phone"],
-      where: tenantFilter ? { tenantId: tenantFilter } : undefined,
       _max: { createdAt: true },
       _count: { _all: true },
     });
     const out = [];
     for (const g of rows.slice(0, 200)) {
-      const last = await db().message.findFirst({
-        where: { tenantId: g.tenantId, phone: g.phone },
+      const last = await tenantDb(g.tenantId).message.findFirst({
+        where: { phone: g.phone },
         orderBy: { createdAt: "desc" },
       });
       out.push({
@@ -726,12 +729,8 @@ export function createApp() {
     }
   });
   app.get("/admin/users", async (req, res) => {
-    const { db } = await import("./db.mjs");
-    const rows = await db().tenantUser.findMany({
-      where: req.query.tenant ? { tenantId: req.query.tenant } : undefined,
-      select: { id: true, tenantId: true, name: true, phone: true, createdAt: true },
-      take: 200,
-    });
+    const { listClientUsers } = await import("./portal.mjs");
+    const rows = await listClientUsers(req.query.tenant);
     res.json({ count: rows.length, users: rows });
   });
 
@@ -781,12 +780,16 @@ export function createApp() {
 
   app.get("/admin/appointments", async (req, res) => {
     const { tenant } = req.query;
-    const _ap = await listAppointments(tenant); res.json({ count: _ap.length, appointments: _ap });
+    const { listAppointmentsAll } = await import("./bookings.mjs");
+    const _ap = tenant ? await listAppointments(tenant) : await listAppointmentsAll();
+    res.json({ count: _ap.length, appointments: _ap });
   });
 
   app.get("/admin/orders", async (req, res) => {
     const { tenant } = req.query;
-    const _or = await listOrders(tenant); res.json({ count: _or.length, orders: _or });
+    const { listOrdersAll } = await import("./orders.mjs");
+    const _or = tenant ? await listOrders(tenant) : await listOrdersAll();
+    res.json({ count: _or.length, orders: _or });
   });
 
   // صفحة دفع تجريبية (بدون Stripe تعرض زر تأكيد يحفظ paid)
@@ -848,14 +851,15 @@ export function createApp() {
     const tenantId = req.query.tenant;
     const days = Number(req.query.days || 30);
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const where = { ...(tenantId ? { tenantId } : {}), createdAt: { gte: since } };
-    const prisma = db();
+    const { tenantDb, systemDb } = await import("./src/security/tenantGuard.mjs");
+    const T = tenantId ? tenantDb(tenantId) : systemDb("report:global");
+    const where = { createdAt: { gte: since } };
     const [msgs, orders, bookings, ratings, broadcasts] = await Promise.all([
-      prisma.message.count({ where }),
-      prisma.order.findMany({ where, select: { total: true, status: true } }),
-      prisma.appointment.count({ where }),
-      prisma.rating.findMany({ where, select: { score: true } }),
-      prisma.broadcast.count({ where }),
+      T.message.count({ where }),
+      T.order.findMany({ where, select: { total: true, status: true } }),
+      T.appointment.count({ where }),
+      T.rating.findMany({ where, select: { score: true } }),
+      T.broadcast.count({ where }),
     ]);
     const revenue = orders.filter((o) => o.status === "paid").reduce((s, o) => s + Number(o.total), 0);
     const avgCsat = ratings.length ? Number((ratings.reduce((s, r) => s + r.score, 0) / ratings.length).toFixed(2)) : null;
@@ -1012,7 +1016,7 @@ load();
       try {
         await sendWhatsAppMessage(b.phone, msg, tenant);
         await pushHistory(b.phone, "assistant", msg, tenant);
-        await markReminded(b.id);
+        await markReminded(b.id, b.tenantId);
         sent.push(b.id);
       } catch (e) {
         console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
@@ -1021,7 +1025,9 @@ load();
     res.json({ ok: true, due: due.length, sent });
   });
   app.post("/admin/appointments/:id/cancel", async (req, res) => {
-    const b = await cancelAppointment(req.params.id);
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const b = await cancelAppointment(req.params.id, tenantId);
     if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
     // تعبئة تلقائية: أول واحد بالانتظار ياخذ الموعد
     let offered = null;
@@ -1035,7 +1041,7 @@ load();
           await pushHistory(next.phone, "assistant", msg, tenant);
         }
         await setBookingState(b.tenantId, next.phone, { step: "offer", service: b.service, slot: b.slot, day: b.day });
-        await removeFromWaiting(next.id);
+        await removeFromWaiting(next.id, b.tenantId);
         offered = next.phone;
         console.log(`  📋 عرض موعد ملغي ${b.id} على ${offered}`);
       }

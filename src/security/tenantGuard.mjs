@@ -121,6 +121,13 @@ export function tenantDb(tenantId) {
   );
 }
 
+// مخرج معلن للعمليات العامة فقط (مجدول/سوبر أدمن) — يُسجَّل تحذير دائماً.
+// القاعدة: أي مسار يخص بوتاً معيناً ممنوع يستخدمه، لازم tenantDb.
+export function systemDb(caller = "unknown") {
+  console.warn(`  ⚠️ وصول عام بدون نطاق من: ${caller}`);
+  return db();
+}
+
 // فحص سريع: هل هذا السجل يخص هذا الـ tenant؟
 export function assertTenant(tenantId, row) {
   if (!row || row.tenantId !== tenantId) {

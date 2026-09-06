@@ -1,4 +1,4 @@
-import { tenantDb } from "./src/security/tenantGuard.mjs";
+import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 import { db } from "./db.mjs";
 
 // كل الدوال هنا تمر عبر tenantDb — لا وصول مباشر لـ Prisma.
@@ -31,7 +31,18 @@ export async function getPublicOrder(id) {
 }
 
 export async function listOrders(tenantId) {
+  if (!tenantId) throw new Error("listOrders يتطلب tenantId — استخدم listOrdersAll للسوبر");
   const rows = await tenantDb(tenantId).order.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 500,
+  });
+  return rows.map(rowToOrder);
+}
+
+// للسوبر أدمن فقط (قائمة عامة) — مسار معلن ومراقب
+export async function listOrdersAll() {
+  const { systemDb } = await import("./src/security/tenantGuard.mjs");
+  const rows = await systemDb("orders:listAll").order.findMany({
     orderBy: { createdAt: "desc" },
     take: 500,
   });
@@ -67,7 +78,7 @@ export async function dueCartReminders(tenantId, { afterMinutes = 60 } = {}) {
 
 // نسخة عامة للمجدول (يجمع كل البوتات ثم يعالج كل نطاق على حدة)
 export async function dueCartRemindersAll({ afterMinutes = 60 } = {}) {
-  const rows = await db().order.findMany({
+  const rows = await systemDb("orders:cart-sweep").order.findMany({
     where: {
       status: "pending",
       cartRemindedAt: null,

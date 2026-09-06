@@ -1,4 +1,4 @@
-import { db } from "./db.mjs";
+import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 
 // تسجيل حدث CRM + إرسال اختياري لـ webhook خارجي (Sheets/Make/n8n)
 export async function logEvent(type, data = {}) {
@@ -10,7 +10,8 @@ export async function logEvent(type, data = {}) {
   };
 
   try {
-    await db().event.create({
+    const T = data.tenantId ? tenantDb(data.tenantId) : systemDb("crm:system-event");
+    await T.event.create({
       data: {
         id: event.id, type,
         tenantId: data.tenantId || null,
@@ -39,11 +40,9 @@ export async function logEvent(type, data = {}) {
 }
 
 export async function listEvents({ tenantId, type, limit = 100 } = {}) {
-  const rows = await db().event.findMany({
-    where: {
-      ...(tenantId ? { tenantId } : {}),
-      ...(type ? { type } : {}),
-    },
+  const T = tenantId ? tenantDb(tenantId) : systemDb("crm:listAll");
+  const rows = await T.event.findMany({
+    where: { ...(type ? { type } : {}) },
     orderBy: { createdAt: "desc" },
     take: Math.min(limit, 2000),
   });

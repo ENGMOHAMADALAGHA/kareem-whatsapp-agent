@@ -1,4 +1,4 @@
-import { db, isDbEnabled } from "./db.mjs";
+import { systemDb } from "./src/security/tenantGuard.mjs";
 
 // كاش قصير للبوتات (تتغير نادراً)
 let cache = { data: null, at: 0 };
@@ -10,8 +10,8 @@ function invalidate() {
 
 async function loadTenants() {
   if (cache.data && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
-  if (!isDbEnabled()) throw new Error("لا توجد DATABASE_URL — اضبط قاعدة البيانات أولاً");
-  const rows = await db().tenant.findMany({ orderBy: { id: "asc" } });
+  if (!process.env.DATABASE_URL) throw new Error("لا توجد DATABASE_URL — اضبط قاعدة البيانات أولاً");
+  const rows = await systemDb("tenants:list").tenant.findMany({ orderBy: { id: "asc" } });
   cache = { data: rows, at: Date.now() };
   return rows;
 }
@@ -35,7 +35,7 @@ export async function listTenants() {
 
 export async function getTenant(id) {
   if (!isDbEnabled()) return null;
-  return db().tenant.findUnique({ where: { id } });
+  return systemDb("tenants:get").tenant.findUnique({ where: { id } });
 }
 
 export async function getDefaultTenant() {
@@ -89,7 +89,7 @@ export async function updateTenant(id, data) {
   const allowed = ["name", "botName", "enabled", "phoneNumberId", "verifyToken", "businessType", "products", "deliveryFee", "bundleOffer", "tone", "languages", "features"];
   const clean = {};
   for (const k of allowed) if (data[k] !== undefined) clean[k] = data[k];
-  const updated = await db().tenant.update({ where: { id }, data: clean });
+  const updated = await systemDb("tenants:update").tenant.update({ where: { id }, data: clean });
   invalidate();
   return updated;
 }
@@ -101,7 +101,7 @@ export async function addTenant(data) {
   if (!/^[a-z0-9-]+$/.test(data.id)) {
     throw new Error("id يجب أن يكون حروف إنجليزية صغيرة وأرقام و - فقط");
   }
-  const created = await db().tenant.create({
+  const created = await systemDb("tenants:create").tenant.create({
     data: {
       id: data.id,
       name: data.name,

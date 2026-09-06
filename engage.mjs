@@ -1,4 +1,5 @@
-import { db } from "./db.mjs";
+import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
+import { storeGet, storeSet, storeDel } from "./store.mjs";
 
 // ── Broadcast ──
 export async function saveBroadcast({ tenantId, text, phones, results }) {
@@ -8,17 +9,17 @@ export async function saveBroadcast({ tenantId, text, phones, results }) {
     phones, results,
     createdAt: new Date().toISOString(),
   };
-  await db().broadcast.create({
+  await tenantDb(tenantId).broadcast.create({
     data: {
-      id: rec.id, tenantId, text: rec.text, phones, results,
+      id: rec.id, text: rec.text, phones, results,
     },
   });
   return rec;
 }
 
 export async function listBroadcasts(tenantId) {
-  const rows = await db().broadcast.findMany({
-    where: tenantId ? { tenantId } : undefined,
+  const T = tenantId ? tenantDb(tenantId) : systemDb("engage:broadcasts");
+  const rows = await T.broadcast.findMany({
     orderBy: { createdAt: "desc" },
     take: 200,
   });
@@ -29,7 +30,6 @@ export async function listBroadcasts(tenantId) {
 }
 
 // ── CSAT ── (طلبات التقييم المعلقة — دائمة في DB)
-import { storeGet, storeSet, storeDel } from "./store.mjs";
 const csatKey = (t, p) => `csat:${t}::${p}`;
 
 export async function requestCsat(tenantId, phone, refId) {
@@ -47,16 +47,16 @@ export async function saveRating({ tenantId, phone, score, refId }) {
     tenantId, phone, score, refId: refId || null,
     createdAt: new Date().toISOString(),
   };
-  await db().rating.create({
-    data: { id: r.id, tenantId, phone, score, refId: refId || null },
+  await tenantDb(tenantId).rating.create({
+    data: { id: r.id, phone, score, refId: refId || null },
   });
   await clearPendingCsat(tenantId, phone);
   return r;
 }
 
 export async function csatStats(tenantId) {
-  const rows = await db().rating.findMany({
-    where: tenantId ? { tenantId } : undefined,
+  const T = tenantId ? tenantDb(tenantId) : systemDb("engage:csat");
+  const rows = await T.rating.findMany({
     select: { score: true },
   });
   const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
