@@ -17,6 +17,37 @@ const conversations = new Map(); // phone -> [{role, text, timestamp}]
 // ── منع التكرار: Meta يعيد إرسال نفس الرسالة إذا تأخر الـ 200 ──
 const seenMessageIds = new Map(); // wamid -> timestamp
 const SEEN_TTL_MS = 1000 * 60 * 60 * 24; // 24 ساعة
+// تحديث آخر رد للمساعد (مثلاً بعد إلحاق تعليمات الدفع) — كاش + DB
+export async function updateLastAssistant(phone, text, tenantInput) {
+  const tenant = await tenantOf(tenantInput);
+  const key = keyOf(phone, tenant);
+  const entry = conversations.get(key);
+  if (entry && entry.messages.length) {
+    for (let i = entry.messages.length - 1; i >= 0; i--) {
+      if (entry.messages[i].role === "assistant") {
+        entry.messages[i].text = text;
+        break;
+      }
+    }
+    entry.updatedAt = Date.now();
+  }
+  try {
+    const rows = await tenantDb(tenant?.id).message.findMany({
+      where: { phone, role: "assistant" },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    });
+    if (rows[0]) {
+      await tenantDb(tenant?.id).message.update({
+        where: { id: rows[0].id },
+        data: { text },
+      });
+    }
+  } catch (e) {
+    console.error(`  ⚠️ فشل تحديث الرد: ${e.message}`);
+  }
+}
+
 export function isDuplicateMessage(msgId) {
   if (!msgId) return false;
   // تنظيف دوري

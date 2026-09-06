@@ -34,7 +34,6 @@ export async function listTenants() {
 }
 
 export async function getTenant(id) {
-  if (!isDbEnabled()) return null;
   return systemDb("tenants:get").tenant.findUnique({ where: { id } });
 }
 

@@ -113,6 +113,25 @@ export function registerAdminRoutes(app) {
     const _or = tenant ? await listOrders(tenant) : await listOrdersAll();
     res.json({ count: _or.length, orders: _or });
   });
+  // تأكيد دفع يدوي (موظف تحقق من المحفظة) + إشعار الزبون
+  app.post("/admin/orders/:id/confirm", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const { getOrder } = await import("../../../orders.mjs");
+    const order = await getOrder(req.params.id, tenantId).catch(() => null);
+    if (!order) return res.status(404).json({ ok: false, error: "الطلب غير موجود" });
+    await markOrderPaid(order.id, tenantId);
+    const { getTenantFull } = await import("../../../tenants.mjs");
+    const tenant = await getTenantFull(tenantId);
+    const { pushHistory } = await import("../../memory/conversations.mjs");
+    const msg = `تم استلام الدفع يا بطل ✅ طلبك ${order.id} ($${order.total}) تأكد وبتجهز هلا للتوصيل. شكراً لثقتك!`;
+    if (tenant) {
+      await sendWhatsAppMessage(order.phone, msg, tenant).catch(() => {});
+      await pushHistory(order.phone, "assistant", msg, tenant);
+    }
+    logEvent("order_paid", { tenantId, phone: order.phone, orderId: order.id, total: order.total, manual: true }).catch(() => {});
+    res.json({ ok: true, orderId: order.id });
+  });
   app.get("/pay/:orderId", async (req, res) => {
     const { getPublicOrder } = await import("../../../orders.mjs");
     const order = await getPublicOrder(req.params.orderId);

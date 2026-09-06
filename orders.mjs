@@ -101,9 +101,28 @@ function rowToOrder(r) {
   return {
     id: r.id, tenantId: r.tenantId, phone: r.phone, name: r.name,
     items: r.items, total: Number(r.total), currency: r.currency,
-    status: r.status, paymentUrl: r.paymentUrl,
+    status: r.status, paymentUrl: r.paymentUrl, proof: r.proof || null,
     cartRemindedAt: r.cartRemindedAt, createdAt: r.createdAt, paidAt: r.paidAt,
   };
+}
+
+// إرفاق إثبات التحويل (لقطة شاشة محفظة) بالطلب
+export async function attachProof(id, tenantId, proof) {
+  const row = await tenantDb(tenantId).order.update({
+    where: { id },
+    data: { proof, status: "proof_received" },
+  }).catch(() => null);
+  return rowToOrder(row);
+}
+
+// أحدث طلب معلق للرقم (لربط لقطة الشاشة به)
+export async function latestPendingOrder(tenantId, phone) {
+  const rows = await tenantDb(tenantId).order.findMany({
+    where: { phone, status: { in: ["pending", "proof_received"] } },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+  });
+  return rowToOrder(rows[0]);
 }
 
 // رابط دفع Stripe — إذا STRIPE_SECRET_KEY موجود يعمل Payment Link حقيقي، وإلا رابط محلي

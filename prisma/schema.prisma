@@ -56,6 +56,7 @@ model Order {
   currency       String    @default("USD")
   status         String    @default("pending")
   paymentUrl     String?   @map("payment_url")
+  proof          Json?     // لقطة شاشة التحويل {mediaId, at} — دفع المحافظ
   cartRemindedAt DateTime? @map("cart_reminded_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   paidAt         DateTime? @map("paid_at") @db.Timestamptz(6)

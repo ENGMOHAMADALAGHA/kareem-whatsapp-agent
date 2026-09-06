@@ -45,7 +45,7 @@ import {
   sendImage,
   defaultButtonsFor,
 } from "../../whatsapp/sender.mjs";
-import { getHistory, pushHistory, isDuplicateMessage } from "../../memory/conversations.mjs";
+import { getHistory, pushHistory, isDuplicateMessage, updateLastAssistant } from "../../memory/conversations.mjs";
 import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox/service.mjs";
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
 import { updateTenant } from "../../../tenants.mjs";
@@ -154,6 +154,35 @@ async function processWebhookBody(body) {
               console.log(`${"─".repeat(60)}\n`);
               continue;
             }
+          }
+
+          // —— صورة (لقطة شاشة تحويل محفظة): اربطها بأحدث طلب معلق ——
+          if ((msg.type === "image" || msg.image?.id) && !text) {
+            const { attachProof, latestPendingOrder } = await import("../../../orders.mjs");
+            const pending = await latestPendingOrder(tenant?.id, from);
+            if (pending) {
+              await attachProof(pending.id, tenant.id, { mediaId: msg.image.id, at: new Date().toISOString() });
+              const reply = `وصلتني اللقطة يا بطل 📸 ربطتها بطلبك ${pending.id} ($${pending.total}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
+              await pushHistory(from, "user", "[صورة: لقطة تحويل]", tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              logEvent("proof_received", { tenantId: tenant.id, phone: from, orderId: pending.id }).catch(() => {});
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`  📸 إثبات ${pending.id} من ${from} (media=${msg.image.id})`);
+              console.log(`${"─".repeat(60)}\n`);
+            } else {
+              const reply = `وصلتني الصورة يا غالي 📸 بس ما لقيت طلب معلق برقمك. إذا بدك تطلب ابعت "بدي اطلب"، وإذا هاي لقطة تحويل ابعت رقم الطلب معها.`;
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`${"─".repeat(60)}\n`);
+            }
+            continue;
           }
 
           if (!text) {
@@ -456,7 +485,7 @@ async function processWebhookBody(body) {
             console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
           }
 
-          // —— إنشاء طلب + رابط دفع عند نية الشراء (متاجر) ——
+          // —— إنشاء طلب + تعليمات الدفع عند نية الشراء (متاجر) ——
           const wantsPay =
             result.intent === "شراء" &&
             (tenant?.businessType === "sport-store" || (tenant.products || []).length > 0) &&
@@ -469,11 +498,20 @@ async function processWebhookBody(body) {
                 items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
                 total, currency: "USD",
               });
-              const baseUrl = process.env.PUBLIC_BASE_URL || `https://kareem-whatsapp-agent.onrender.com`;
-              const { url: payUrl, mock } = await createPaymentLink(order, baseUrl);
-              result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}${mock ? " (تجريبي — فعّل STRIPE_SECRET_KEY للدفع الحقيقي)" : ""}`;
+              const wallets = tenant.features?.paymentWallets || [];
+              if (wallets.length) {
+                // دفع بالمحافظ: بدون روابط — تحويل + لقطة شاشة + تأكيد بشري
+                const lines = wallets.map((w) => `• ${w.type}: ${w.number}${w.name ? ` (${w.name})` : ""}`).join("\n");
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والموظف بيأكدلك الطلب.`;
+                console.log(`  💳 طلب ${order.id} $${total} -> محافظ`);
+              } else {
+                const baseUrl = process.env.PUBLIC_BASE_URL || `https://kareem-whatsapp-agent.onrender.com`;
+                const { url: payUrl, mock } = await createPaymentLink(order, baseUrl);
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}${mock ? " (تجريبي — فعّل STRIPE_SECRET_KEY للدفع الحقيقي)" : ""}`;
+                console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
+              }
               logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});
-              console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
+              await updateLastAssistant(from, result.reply, tenant);
             } catch (e) {
               console.error(`  ❌ خطأ إنشاء الطلب: ${e.message}`);
             }

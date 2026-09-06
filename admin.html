@@ -228,8 +228,16 @@ async function sendReply() {
 async function loadOrders() {
   const j = await api("/admin/orders?tenant=" + cur.tenant);
   $("ordersList").innerHTML = j.orders.map((o) =>
-    "<div class='border rounded p-2 text-sm'><b>" + o.id + "</b> — " + o.phone + " — $" + o.total + " — " + o.status + "</div>"
+    "<div class='border rounded p-2 text-sm'><b>" + o.id + "</b> — " + o.phone + " — $" + o.total + " — " + o.status +
+    (o.proof ? " 📸 <span class='text-green-600'>لقطة مرفقة</span>" : "") +
+    ((o.status === "pending" || o.status === "proof_received") ? " <button class='text-green-600 text-xs font-bold' onclick=\"confirmOrder('" + o.id + "')\">✔ تأكيد الدفع</button>" : "") + "</div>"
   ).join("") || "<p class='text-slate-400'>لا طلبات</p>";
+}
+
+async function confirmOrder(id) {
+  if (!confirm("تأكيد استلام الدفع للطلب " + id + "؟")) return;
+  await api("/admin/orders/" + id + "/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+  loadOrders();
 }
 
 async function loadBooking() {
