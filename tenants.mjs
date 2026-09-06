@@ -85,6 +85,15 @@ export function memoryKey(tenantId, phone) {
   return `${tenantId}::${phone}`;
 }
 
+export async function updateTenant(id, data) {
+  const allowed = ["name", "botName", "enabled", "phoneNumberId", "verifyToken", "businessType", "products", "deliveryFee", "bundleOffer", "tone", "languages", "features"];
+  const clean = {};
+  for (const k of allowed) if (data[k] !== undefined) clean[k] = data[k];
+  const updated = await db().tenant.update({ where: { id }, data: clean });
+  invalidate();
+  return updated;
+}
+
 export async function addTenant(data) {
   if (!data || !data.id || !data.name || !data.botName) {
     throw new Error("id و name و botName مطلوبة");

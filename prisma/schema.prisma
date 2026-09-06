@@ -27,6 +27,7 @@ model Tenant {
   ratings      Rating[]
   broadcasts   Broadcast[]
   events       Event[]
+  users        TenantUser[]
 
   @@map("tenants")
 }
@@ -103,6 +104,21 @@ model Broadcast {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@map("broadcasts")
+}
+
+model TenantUser {
+  id           String   @id
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String?
+  phone        String
+  passwordHash String
+  resetCode    String?
+  resetExpires DateTime?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, phone])
+  @@map("tenant_users")
 }
 
 model Event {

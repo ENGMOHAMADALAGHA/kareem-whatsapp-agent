@@ -100,14 +100,69 @@
 const $ = (id) => document.getElementById(id);
 let cur = { tenant: "", phone: "" };
 let lastSeen = 0;
+const isPortal = location.pathname.startsWith("/portal");
+let portalToken = localStorage.getItem("portalToken") || "";
 
 async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if (isPortal && portalToken) opts.headers["Authorization"] = "Bearer " + portalToken;
   const r = await fetch(path, opts);
+  if (r.status === 401 && isPortal) { showLogin(); throw new Error("login"); }
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
 
+function showLogin() {
+  let ov = $("loginOv");
+  if (ov) { ov.style.display = "flex"; return; }
+  ov = document.createElement("div");
+  ov.id = "loginOv";
+  ov.style.cssText = "position:fixed;inset:0;background:#0f172acc;display:flex;align-items:center;justify-content:center;z-index:50";
+  ov.innerHTML = "<div class='bg-white rounded p-6 w-80 space-y-2' dir='rtl'>" +
+    "<h2 class='font-bold text-lg'>🔐 دخول بوابتك</h2>" +
+    "<input id='liTenant' class='w-full border rounded p-2' placeholder='معرف البوت (مثال: kareem-sport)'>" +
+    "<input id='liPhone' class='w-full border rounded p-2' placeholder='رقم الجوال'>" +
+    "<input id='liPass' type='password' class='w-full border rounded p-2' placeholder='كلمة السر'>" +
+    "<button id='liGo' class='w-full py-2 rounded bg-blue-600 text-white'>دخول</button>" +
+    "<button id='liForgot' class='w-full text-xs text-blue-600'>نسيت كلمة السر؟</button>" +
+    "<div id='liMsg' class='text-xs text-red-500'></div></div>";
+  document.body.appendChild(ov);
+  $("liGo").onclick = async () => {
+    try {
+      const j = await (await fetch("/portal/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: $("liTenant").value.trim(), phone: $("liPhone").value.trim(), password: $("liPass").value }) })).json();
+      if (!j.ok) throw new Error(j.error);
+      portalToken = j.token;
+      localStorage.setItem("portalToken", portalToken);
+      ov.style.display = "none";
+      await loadTenants(); refreshAll();
+    } catch (e) { $("liMsg").textContent = e.message; }
+  };
+  $("liForgot").onclick = async () => {
+    const tenantId = $("liTenant").value.trim(), phone = $("liPhone").value.trim();
+    if (!tenantId || !phone) { $("liMsg").textContent = "أدخل معرف البوت ورقم الجوال أولاً"; return; }
+    await fetch("/portal/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone }) });
+    const code = prompt("أرسلنا رمزاً لواتساب " + phone + " — أدخله هنا:");
+    if (!code) return;
+    const np = prompt("كلمة السر الجديدة (6 أحرف على الأقل):");
+    if (!np) return;
+    const j = await (await fetch("/portal/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone, code, newPassword: np }) })).json();
+    $("liMsg").textContent = j.ok ? "تم ✅ سجل دخولك الآن" : j.error;
+  };
+}
+
 async function loadTenants() {
+  if (isPortal && !portalToken) { showLogin(); return; }
+  // في البوابة: البوت معروف من التوكن — لا اختيار
+  if (isPortal && portalToken) {
+    try {
+      const me = JSON.parse(atob(portalToken.split(".")[1]));
+      cur.tenant = me.tenantId;
+      $("tenantSel").innerHTML = "<option>" + me.tenantId + "</option>";
+      $("tenantSel").disabled = true;
+      return;
+    } catch (e) { showLogin(); return; }
+  }
   const j = await api("/admin/tenants");
   const sel = $("tenantSel");
   sel.innerHTML = "";

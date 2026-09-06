@@ -612,21 +612,54 @@ export function createApp() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // ── حماية /admin بـ Basic Auth (ADMIN_USER / ADMIN_PASS) ──
+  // ── حماية /admin: سوبر أدمن (Basic) أو عميل (JWT) ──
   const ADMIN_USER = process.env.ADMIN_USER || "";
   const ADMIN_PASS = process.env.ADMIN_PASS || "";
-  const adminAuth = (req, res, next) => {
-    if (!ADMIN_USER || !ADMIN_PASS) return next(); // بدون إعداد = مفتوح (للتطوير المحلي فقط)
+  // مسارات ممنوعة على العملاء (إدارة البوتات والمستخدمين فقط للسوبر)
+  // ملاحظة: req.path هنا بدون بادئة /admin لأن الـ middleware مركّب عليها
+  const SUPER_ONLY = ["/tenants", "/users"];
+  const adminAuth = async (req, res, next) => {
     const header = req.headers.authorization || "";
     const [scheme, encoded] = header.split(" ");
-    if (scheme === "Basic" && encoded) {
-      const [u, p] = Buffer.from(encoded, "base64").toString().split(":");
-      if (u === ADMIN_USER && p === ADMIN_PASS) return next();
+    // 1) عميل بـ JWT؟
+    if (scheme === "Bearer" && encoded) {
+      const { verifyClientToken } = await import("./portal.mjs");
+      const p = verifyClientToken(encoded);
+      if (p) {
+        // kill switch: الموقوف لا يدخل
+        const t = await getTenantFull(p.tenantId);
+        if (!t || t.enabled === false) {
+          return res.status(403).json({ ok: false, error: "هذا البوت موقوف — تواصل مع الإدارة" });
+        }
+        if (SUPER_ONLY.some((s) => req.path === s || req.path.startsWith(s + "/"))) {
+          return res.status(403).json({ ok: false, error: "غير مصرح" });
+        }
+        req.clientTenant = p.tenantId; // إجبار النطاق على بوته فقط
+        return next();
+      }
     }
+    // 2) سوبر أدمن؟
+    if (ADMIN_USER && ADMIN_PASS && scheme === "Basic" && encoded) {
+      const [u, pass] = Buffer.from(encoded, "base64").toString().split(":");
+      if (u === ADMIN_USER && pass === ADMIN_PASS) return next();
+    }
+    if (!ADMIN_USER || !ADMIN_PASS) return next(); // بدون إعداد = مفتوح (للتطوير المحلي فقط)
     res.setHeader("WWW-Authenticate", 'Basic realm="admin"');
     return res.status(401).json({ ok: false, error: "مطلوب تسجيل دخول المدير" });
   };
   app.use("/admin", adminAuth);
+  // إجبار نطاق العميل على بوته في كل الطلبات
+  app.use("/admin", (req, res, next) => {
+    if (req.clientTenant) {
+      req.query.tenant = req.clientTenant;
+      if (req.body && typeof req.body === "object") {
+        req.body.tenantId = req.clientTenant;
+        req.body.tenant = req.clientTenant;
+      }
+      if (req.params.tenantId) req.params.tenantId = req.clientTenant;
+    }
+    next();
+  });
 
   // صفحة ترحيبية
   app.get("/", async (req, res) => {
@@ -672,6 +705,74 @@ export function createApp() {
       const created = await addTenant(req.body || {});
       console.log(`  ➕ tenant جديد: ${created.id} (${created.name})`);
       res.status(201).json({ ok: true, tenant: created });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Kill switch: إيقاف/تشغيل بوت (سوبر أدمن فقط)
+  app.patch("/admin/tenants/:id", async (req, res) => {
+    try {
+      const { updateTenant } = await import("./tenants.mjs");
+      const updated = await updateTenant(req.params.id, req.body || {});
+      console.log(`  🔌 tenant ${updated.id} enabled=${updated.enabled}`);
+      res.json({ ok: true, tenant: { id: updated.id, enabled: updated.enabled } });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  // ── حسابات العملاء (سوبر أدمن فقط) ──
+  app.post("/admin/users", async (req, res) => {
+    try {
+      const { createClientUser } = await import("./portal.mjs");
+      const u = await createClientUser(req.body || {});
+      res.status(201).json({ ok: true, user: { id: u.id, tenantId: u.tenantId, phone: u.phone, name: u.name } });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  app.get("/admin/users", async (req, res) => {
+    const { db } = await import("./db.mjs");
+    const rows = await db().tenantUser.findMany({
+      where: req.query.tenant ? { tenantId: req.query.tenant } : undefined,
+      select: { id: true, tenantId: true, name: true, phone: true, createdAt: true },
+      take: 200,
+    });
+    res.json({ count: rows.length, users: rows });
+  });
+
+  // ── بوابة العميل (عامة: دخول + نسيت كلمة السر) ──
+  app.post("/portal/login", async (req, res) => {
+    try {
+      const { verifyClientUser, signClientToken } = await import("./portal.mjs");
+      const { tenantId, phone, password } = req.body || {};
+      const u = await verifyClientUser(tenantId, phone, password);
+      if (!u) return res.status(401).json({ ok: false, error: "بيانات الدخول غير صحيحة" });
+      if (u.disabled) return res.status(403).json({ ok: false, error: "هذا البوت موقوف — تواصل مع الإدارة" });
+      res.json({ ok: true, token: signClientToken(u), botName: u.tenant?.botName, tenantId: u.tenantId });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  app.post("/portal/forgot", async (req, res) => {
+    try {
+      const { startPasswordReset } = await import("./portal.mjs");
+      const { tenantId, phone } = req.body || {};
+      const tenant = await getTenantFull(tenantId);
+      if (!tenant) return res.json({ ok: true }); // لا نكشف
+      await startPasswordReset(tenantId, phone, (codeMsg) => sendWhatsAppMessage(phone, codeMsg, tenant));
+      res.json({ ok: true });
+    } catch (e) {
+      res.json({ ok: true }); // دائماً نجاح ظاهري (حماية)
+    }
+  });
+  app.post("/portal/reset", async (req, res) => {
+    try {
+      const { finishPasswordReset } = await import("./portal.mjs");
+      const { tenantId, phone, code, newPassword } = req.body || {};
+      await finishPasswordReset(tenantId, phone, code, newPassword);
+      res.json({ ok: true });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });
     }
@@ -839,7 +940,8 @@ export function createApp() {
     res.json({ count: inbox.length, inbox });
   });
   app.get("/admin/inbox/:tenantId/:phone", async (req, res) => {
-    const { tenantId, phone } = req.params;
+    const tenantId = req.clientTenant || req.params.tenantId;
+    const { phone } = req.params;
     res.json({
       tenantId, phone,
       takeover: isTakeover(tenantId, phone),
@@ -873,6 +975,11 @@ export function createApp() {
 
   // ── لوحة التحكم المرئية ──
   app.get("/admin/", (req, res) => {
+    res.sendFile(path.join(__dirname, "admin.html"));
+  });
+
+  // ── بوابة العميل (صفحة دخول + لوحة مقفلة على بوته) ──
+  app.get("/portal/", (req, res) => {
     res.sendFile(path.join(__dirname, "admin.html"));
   });
 
