@@ -1,0 +1,261 @@
+<!doctype html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لوحة تحكم البوتات</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .tab-btn.active { background: #1d4ed8; color: #fff; }
+  .msg-user { background: #dcfce7; margin-left: auto; }
+  .msg-assistant { background: #f1f5f9; margin-right: auto; }
+  .blink { animation: bl 1s infinite; }
+  @keyframes bl { 50% { opacity: .4; } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+<div class="max-w-6xl mx-auto p-4">
+  <div class="flex items-center gap-3 mb-4">
+    <h1 class="text-2xl font-bold">🤖 لوحة تحكم البوتات</h1>
+    <span id="liveDot" class="text-green-600 text-sm">● مباشر</span>
+    <select id="tenantSel" class="mr-auto border rounded p-2"></select>
+  </div>
+
+  <div class="flex gap-2 mb-4 flex-wrap" id="tabs">
+    <button data-tab="inbox" class="tab-btn active px-4 py-2 rounded bg-white shadow">📥 المحادثات</button>
+    <button data-tab="orders" class="tab-btn px-4 py-2 rounded bg-white shadow">🧾 الطلبات</button>
+    <button data-tab="booking" class="tab-btn px-4 py-2 rounded bg-white shadow">📅 الحجوزات</button>
+    <button data-tab="csat" class="tab-btn px-4 py-2 rounded bg-white shadow">⭐ التقييمات</button>
+    <button data-tab="send" class="tab-btn px-4 py-2 rounded bg-white shadow">📢 بث</button>
+    <button data-tab="crm" class="tab-btn px-4 py-2 rounded bg-white shadow">📊 السجل</button>
+    <button data-tab="report" class="tab-btn px-4 py-2 rounded bg-white shadow">💰 التقرير</button>
+  </div>
+
+  <!-- Inbox -->
+  <div id="tab-inbox" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="bg-white rounded shadow p-3">
+      <h3 class="font-bold mb-2">المحادثات <span id="inboxCount" class="text-xs text-slate-500"></span></h3>
+      <div id="convList" class="space-y-2 max-h-[60vh] overflow-auto"></div>
+    </div>
+    <div class="bg-white rounded shadow p-3 md:col-span-2 flex flex-col">
+      <div class="flex items-center gap-2 mb-2">
+        <h3 id="convTitle" class="font-bold">اختر محادثة</h3>
+        <button id="takeoverBtn" class="hidden text-xs px-2 py-1 rounded bg-amber-100">⏸️ إيقاف للموظف</button>
+      </div>
+      <div id="convMsgs" class="flex-1 space-y-2 max-h-[50vh] overflow-auto mb-2"></div>
+      <div class="flex gap-2">
+        <input id="replyInput" class="flex-1 border rounded p-2" placeholder="رد الموظف...">
+        <button id="replyBtn" class="px-4 py-2 rounded bg-blue-600 text-white">إرسال</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Orders -->
+  <div id="tab-orders" class="hidden bg-white rounded shadow p-3">
+    <h3 class="font-bold mb-2">الطلبات</h3>
+    <div id="ordersList" class="space-y-2"></div>
+  </div>
+
+  <!-- Booking -->
+  <div id="tab-booking" class="hidden bg-white rounded shadow p-3">
+    <h3 class="font-bold mb-2">الحجوزات</h3>
+    <div class="flex gap-2 mb-3">
+      <button id="remindBtn" class="px-3 py-1 rounded bg-violet-600 text-white text-sm">⏰ تشغيل التذكير</button>
+    </div>
+    <div id="bookingList" class="space-y-2"></div>
+  </div>
+
+  <!-- CSAT -->
+  <div id="tab-csat" class="hidden bg-white rounded shadow p-3">
+    <h3 class="font-bold mb-2">التقييمات</h3>
+    <div id="csatStats" class="mb-3"></div>
+  </div>
+
+  <!-- Broadcast -->
+  <div id="tab-send" class="hidden bg-white rounded shadow p-3">
+    <h3 class="font-bold mb-2">بث جماعي (حد 50 رقم)</h3>
+    <textarea id="bcText" class="w-full border rounded p-2 mb-2" rows="3" placeholder="نص الرسالة..."></textarea>
+    <input id="bcPhones" class="w-full border rounded p-2 mb-2" placeholder="أرقام مفصولة بفاصلة: 9627...,9627...">
+    <button id="bcBtn" class="px-4 py-2 rounded bg-green-600 text-white">📢 إرسال البث</button>
+    <div id="bcList" class="mt-3 space-y-1"></div>
+  </div>
+
+  <!-- Report -->
+  <div id="tab-report" class="hidden bg-white rounded shadow p-3">
+    <h3 class="font-bold mb-2">تقرير التوفير (30 يوم)</h3>
+    <div id="reportBox" class="space-y-2"></div>
+  </div>
+
+  <!-- CRM -->
+  <div id="tab-crm" class="hidden bg-white rounded shadow p-3">
+    <div class="flex items-center gap-2 mb-2">
+      <h3 class="font-bold">سجل الأحداث</h3>
+      <a href="/admin/crm/export.csv" class="text-xs px-2 py-1 rounded bg-slate-200">⬇ CSV</a>
+    </div>
+    <div id="crmList" class="space-y-1 text-sm max-h-[60vh] overflow-auto"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let cur = { tenant: "", phone: "" };
+let lastSeen = 0;
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+async function loadTenants() {
+  const j = await api("/admin/tenants");
+  const sel = $("tenantSel");
+  sel.innerHTML = "";
+  j.tenants.forEach((t) => {
+    const o = document.createElement("option");
+    o.value = t.id; o.textContent = t.botName + " - " + t.name;
+    if (t.isDefault) o.selected = true;
+    sel.appendChild(o);
+  });
+  cur.tenant = sel.value;
+  sel.onchange = () => { cur.tenant = sel.value; cur.phone = ""; refreshAll(); };
+}
+
+async function loadInbox() {
+  const j = await api("/admin/inbox?tenant=" + cur.tenant);
+  $("inboxCount").textContent = "(" + j.count + ")";
+  const box = $("convList");
+  box.innerHTML = "";
+  j.inbox.forEach((c) => {
+    const d = document.createElement("div");
+    d.className = "border rounded p-2 cursor-pointer hover:bg-slate-50" + (c.phone === cur.phone ? " border-blue-500" : "");
+    d.innerHTML = "<div class='font-bold'>" + c.phone + (c.takeover ? " ⏸️" : "") + "</div><div class='text-xs text-slate-500'>" + (c.lastMessage ? c.lastMessage.text : "") + "</div>";
+    d.onclick = () => { cur.phone = c.phone; loadConv(); loadInbox(); };
+    box.appendChild(d);
+    if (c.updatedAt > lastSeen) {
+      lastSeen = c.updatedAt;
+      $("liveDot").classList.add("blink");
+      setTimeout(() => $("liveDot").classList.remove("blink"), 1500);
+    }
+  });
+}
+
+async function loadConv() {
+  if (!cur.phone) return;
+  const j = await api("/admin/inbox/" + cur.tenant + "/" + cur.phone);
+  $("convTitle").textContent = cur.phone;
+  const tb = $("takeoverBtn");
+  tb.classList.remove("hidden");
+  tb.textContent = j.takeover ? "▶ تشغيل البوت" : "⏸️ إيقاف للموظف";
+  tb.onclick = async () => {
+    await api("/admin/takeover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone: cur.phone, enabled: !j.takeover }) });
+    loadConv(); loadInbox();
+  };
+  const box = $("convMsgs");
+  box.innerHTML = "";
+  j.messages.forEach((m) => {
+    const d = document.createElement("div");
+    d.className = "rounded p-2 max-w-[80%] text-sm " + (m.role === "user" ? "msg-user" : "msg-assistant");
+    d.textContent = m.text;
+    box.appendChild(d);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendReply() {
+  const t = $("replyInput").value.trim();
+  if (!t || !cur.phone) return alert("اختر محادثة أولاً");
+  await api("/admin/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone: cur.phone, text: t }) });
+  $("replyInput").value = "";
+  loadConv();
+}
+
+async function loadOrders() {
+  const j = await api("/admin/orders?tenant=" + cur.tenant);
+  $("ordersList").innerHTML = j.orders.map((o) =>
+    "<div class='border rounded p-2 text-sm'><b>" + o.id + "</b> — " + o.phone + " — $" + o.total + " — " + o.status + "</div>"
+  ).join("") || "<p class='text-slate-400'>لا طلبات</p>";
+}
+
+async function loadBooking() {
+  const j = await api("/admin/appointments?tenant=" + cur.tenant);
+  $("bookingList").innerHTML = j.appointments.map((b) =>
+    "<div class='border rounded p-2 text-sm'><b>" + b.id + "</b> — " + b.phone + " — " + (b.service || "") + " " + (b.slot || "") + " — " + b.status +
+    (b.status === "confirmed" ? " <button class='text-red-500 text-xs' onclick=\"cancelBk('" + b.id + "')\">إلغاء</button>" : "") + "</div>"
+  ).join("") || "<p class='text-slate-400'>لا حجوزات</p>";
+}
+
+async function cancelBk(id) {
+  await fetch("/admin/appointments/" + id + "/cancel", { method: "POST" });
+  loadBooking();
+}
+
+async function loadCsat() {
+  const j = await api("/admin/csat?tenant=" + cur.tenant);
+  let bars = "";
+  for (let s = 5; s >= 1; s--) {
+    const n = (j.dist && j.dist[s]) || 0;
+    const pct = j.count ? Math.round((n / j.count) * 100) : 0;
+    bars += "<div class='flex items-center gap-2 text-sm'><span class='w-8'>" + s + "⭐</span><div class='flex-1 bg-slate-200 rounded'><div class='bg-yellow-400 rounded' style='width:" + pct + "%;height:12px'></div></div><span class='w-10'>" + n + "</span></div>";
+  }
+  $("csatStats").innerHTML = "<div class='mb-2'>المتوسط: <b>" + (j.avg || "—") + "</b> من " + j.count + " تقييم</div>" + bars;
+}
+
+async function loadBc() {
+  const j = await api("/admin/broadcasts?tenant=" + cur.tenant);
+  $("bcList").innerHTML = j.broadcasts.map((b) =>
+    "<div class='border rounded p-2 text-xs'>" + b.id + " — " + b.phones.length + " رقم — " + b.createdAt + "</div>"
+  ).join("");
+}
+
+async function loadReport() {
+  const j = await api("/admin/report?tenant=" + cur.tenant);
+  $("reportBox").innerHTML =
+    "<div class='p-3 rounded bg-green-50 border'>" + j.message + "</div>" +
+    "<div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-center'>" +
+    "<div class='border rounded p-2'><div class='text-xl font-bold'>" + j.messagesHandled + "</div><div class='text-xs'>رسالة</div></div>" +
+    "<div class='border rounded p-2'><div class='text-xl font-bold'>$" + j.orders.revenue + "</div><div class='text-xs'>مدفوعات (" + j.orders.paid + "/" + j.orders.count + ")</div></div>" +
+    "<div class='border rounded p-2'><div class='text-xl font-bold'>" + j.bookings + "</div><div class='text-xs'>حجوزات</div></div>" +
+    "<div class='border rounded p-2'><div class='text-xl font-bold'>" + (j.csat.avg || "—") + "</div><div class='text-xs'>تقييم (" + j.csat.count + ")</div></div>" +
+    "</div><div class='text-sm'>⏱ ساعات موظفين موفرة: <b>" + j.staffHoursSaved + "</b> — 📢 بث: " + j.broadcasts + "</div>";
+}
+
+async function loadCrm() {
+  const j = await api("/admin/crm?tenant=" + cur.tenant + "&limit=50");
+  $("crmList").innerHTML = j.events.map((e) =>
+    "<div class='border-b py-1'>[" + e.type + "] " + (e.phone || "") + " " + (e.intent || "") + " <span class='text-slate-400'>" + e.at + "</span></div>"
+  ).join("");
+}
+
+function refreshAll() {
+  loadInbox(); loadOrders(); loadBooking(); loadCsat(); loadBc(); loadCrm(); loadReport();
+  if (cur.phone) loadConv();
+}
+
+document.querySelectorAll("#tabs button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#tabs button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    ["inbox", "orders", "booking", "csat", "send", "crm", "report"].forEach((t) => $("tab-" + t).classList.add("hidden"));
+    $("tab-" + b.dataset.tab).classList.remove("hidden");
+  };
+});
+
+$("replyBtn").onclick = sendReply;
+$("replyInput").onkeydown = (e) => { if (e.key === "Enter") sendReply(); };
+$("remindBtn").onclick = async () => {
+  const j = await api("/admin/remind-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  alert("تم: " + JSON.stringify(j.sent));
+  loadBooking();
+};
+$("bcBtn").onclick = async () => {
+  const phones = $("bcPhones").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const j = await api("/admin/broadcast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, text: $("bcText").value, phones }) });
+  alert(j.ok ? "تم البث" : j.error);
+  loadBc();
+};
+
+(async () => { await loadTenants(); refreshAll(); setInterval(() => { loadInbox(); if (cur.phone) loadConv(); }, 4000); })();
+</script>
+</body>
+</html>

@@ -2,7 +2,10 @@ import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import express from "express";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   resolveTenant,
   getTenantFull,
@@ -745,6 +748,35 @@ export function createApp() {
     res.json({ count: all.length, broadcasts: all });
   });
 
+  // ── تقرير التوفير الشهري (يبيع الاشتراك) ──
+  app.get("/admin/report", async (req, res) => {
+    const tenantId = req.query.tenant;
+    const days = Number(req.query.days || 30);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const where = { ...(tenantId ? { tenantId } : {}), createdAt: { gte: since } };
+    const prisma = db();
+    const [msgs, orders, bookings, ratings, broadcasts] = await Promise.all([
+      prisma.message.count({ where }),
+      prisma.order.findMany({ where, select: { total: true, status: true } }),
+      prisma.appointment.count({ where }),
+      prisma.rating.findMany({ where, select: { score: true } }),
+      prisma.broadcast.count({ where }),
+    ]);
+    const revenue = orders.filter((o) => o.status === "paid").reduce((s, o) => s + Number(o.total), 0);
+    const avgCsat = ratings.length ? Number((ratings.reduce((s, r) => s + r.score, 0) / ratings.length).toFixed(2)) : null;
+    const staffHoursSaved = Number(((msgs * 3) / 60).toFixed(1)); // 3 دقائق لكل رد آلي
+    res.json({
+      ok: true, tenant: tenantId || "all", days,
+      messagesHandled: msgs,
+      orders: { count: orders.length, paid: orders.filter((o) => o.status === "paid").length, revenue },
+      bookings: bookings,
+      csat: { avg: avgCsat, count: ratings.length },
+      broadcasts,
+      staffHoursSaved,
+      message: `البوت رد على ${msgs} رسالة (~${staffHoursSaved} ساعة موظفين)، وحقق $${revenue} مدفوعات، بتقييم ${avgCsat || "—"}/5`,
+    });
+  });
+
   // ── CSAT: طلب تقييم + عرض النتائج ──
   app.post("/admin/csat-request", async (req, res) => {
     const { tenantId, phone } = req.body || {};
@@ -837,6 +869,11 @@ export function createApp() {
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
+  });
+
+  // ── لوحة التحكم المرئية ──
+  app.get("/admin/", (req, res) => {
+    res.sendFile(path.join(__dirname, "admin.html"));
   });
 
   // ── صفحة Inbox بسيطة (HTML) ──
@@ -981,6 +1018,31 @@ load();
             if (isTakeover(tenant?.id, from)) {
               await pushHistory(from, "user", text, tenant);
               console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // —— استعلام عن طلب: "وين طلبي ord_..." ——
+            const orderMatch = text.match(/\b(ord_[a-z0-9]+)\b/i);
+            if (orderMatch) {
+              const qOrder = await getOrder(orderMatch[1].toLowerCase());
+              let reply;
+              if (qOrder && qOrder.phone === from) {
+                const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي" }[qOrder.status] || qOrder.status;
+                reply = `طلبك ${qOrder.id} — ${(qOrder.items || []).map((i) => i.name).join(" + ")} — الإجمالي $${qOrder.total} — الحالة: ${statusAr}`;
+                if (qOrder.status === "pending" && qOrder.paymentUrl) reply += `\nرابط الدفع: ${qOrder.paymentUrl}`;
+              } else {
+                reply = `ما لقيت طلب بهذا الرقم يا غالي 🤔 تأكد من الرقم (مثال: ord_abc123) أو ابعت "أريد موظف" للمساعدة.`;
+              }
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              logEvent("message", { tenantId: tenant?.id, phone: from, intent: "استفسار", text: text.slice(0, 200) }).catch(() => {});
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل إرسال حالة الطلب: ${e.message}`);
+              }
+              console.log(`  📦 استعلام طلب ${orderMatch[1]} للعميل ${from}`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
             }
