@@ -59,7 +59,46 @@ export function isDuplicateMessage(msgId) {
   }
   if (seenMessageIds.has(msgId)) return true;
   seenMessageIds.set(msgId, Date.now());
+  // ثبات عبر restart: احفظ المعرف في KvStore (fire-and-forget)
+  persistSeenMessage(msgId);
   return false;
+}
+
+// نسخة دائمة: ذاكرة → Redis (SETNX ذري عبر النسخ) → KvStore/DB.
+// تُستخدم في الـ webhook لمنع الرد المكرر بعد restart أو عند التوسع.
+export async function isDuplicateMessageAsync(msgId) {
+  if (!msgId) return false;
+  if (seenMessageIds.has(msgId)) return true;
+  try {
+    const { redisSetNx } = await import("../jobs/redisClient.mjs");
+    const dup = await redisSetNx(`wamid:${msgId}`, SEEN_TTL_MS);
+    if (dup === true) {
+      seenMessageIds.set(msgId, Date.now());
+      return true;
+    }
+    if (dup === false) {
+      seenMessageIds.set(msgId, Date.now());
+      persistSeenMessage(msgId);
+      return false;
+    }
+    // dup === null: لا Redis — تحقق من DB ثم سجّل
+    const { storeGet } = await import("../../store.mjs");
+    if (await storeGet(`wamid:${msgId}`)) {
+      seenMessageIds.set(msgId, Date.now());
+      return true;
+    }
+    seenMessageIds.set(msgId, Date.now());
+    persistSeenMessage(msgId);
+    return false;
+  } catch {
+    return isDuplicateMessage(msgId);
+  }
+}
+
+function persistSeenMessage(msgId) {
+  import("../../store.mjs")
+    .then(({ storeSet }) => storeSet(`wamid:${msgId}`, { at: Date.now() }, SEEN_TTL_MS))
+    .catch(() => {});
 }
 
 export async function getHistory(phone, tenantInput) {

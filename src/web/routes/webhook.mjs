@@ -45,11 +45,11 @@ import {
   sendImage,
   defaultButtonsFor,
 } from "../../whatsapp/sender.mjs";
-import { getHistory, pushHistory, isDuplicateMessage, updateLastAssistant } from "../../memory/conversations.mjs";
+import { getHistory, pushHistory, isDuplicateMessageAsync, updateLastAssistant } from "../../memory/conversations.mjs";
 import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox/service.mjs";
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
 import { updateTenant } from "../../../tenants.mjs";
-import { webhookQueue } from "../../jobs/queue.mjs";
+import { webhookQueue, voiceQueue } from "../../jobs/queue.mjs";
 import { checkLimit, senderKey } from "../../security/rateLimit.mjs";
 import { createClientUser, listClientUsers } from "../../../portal.mjs";
 
@@ -114,8 +114,8 @@ async function processWebhookBody(body) {
         }
 
         for (const msg of messages) {
-          // منع التكرار: نفس الـ wamid لا يُعالج مرتين أبداً
-          if (msg.id && isDuplicateMessage(msg.id)) {
+          // منع التكرار: نفس الـ wamid لا يُعالج مرتين أبداً (دائم عبر restart)
+          if (msg.id && (await isDuplicateMessageAsync(msg.id))) {
             console.log(`  🔁 رسالة مكررة (id=${msg.id}) - تم تجاهلها`);
             continue;
           }
@@ -139,13 +139,15 @@ async function processWebhookBody(body) {
           const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || null;
           const name = contacts.find((c) => c.wa_id === from)?.profile?.name || from;
 
-          // —— فويس نوت: حمّله وفرّغه ثم عامله كنص ——
+          // —— فويس نوت: عبر طابور مخصص منخفض التزامن (2) + مهلات + بديل نصي ——
           if ((msg.type === "audio" || msg.audio?.id) && !text) {
             try {
               const mediaId = msg.audio?.id;
               console.log(`  🎤 فويس من ${from} (media=${mediaId}) - جاري التفريغ...`);
-              const { buffer, mimeType } = await downloadWhatsAppMedia(mediaId, tenant?.whatsapp_token || WHATSAPP_TOKEN);
-              const { text: transcript, reason } = await transcribeAudio(buffer, mimeType, (tenant?.languages || ["ar", "en"]).join(","));
+              const { text: transcript, reason } = await voiceQueue.run(`voice:${msg.id || `${from}:${Date.now()}`}`, async () => {
+                const { buffer, mimeType } = await downloadWhatsAppMedia(mediaId, tenant?.whatsapp_token || WHATSAPP_TOKEN);
+                return transcribeAudio(buffer, mimeType, (tenant?.languages || ["ar", "en"]).join(","));
+              });
               if (transcript) {
                 text = transcript;
                 console.log(`  🎤 تفريغ: "${text}"`);
@@ -163,24 +165,13 @@ async function processWebhookBody(body) {
             }
           }
 
-          // —— صورة (لقطة شاشة تحويل محفظة): اربطها بأحدث طلب معلق ——
-          if ((msg.type === "image" || msg.image?.id) && !text) {
-            const { attachProof, latestPendingOrder } = await import("../../../orders.mjs");
-            const pending = await latestPendingOrder(tenant?.id, from);
-            if (pending) {
-              await attachProof(pending.id, tenant.id, { mediaId: msg.image.id, at: new Date().toISOString() });
-              const reply = `وصلتني اللقطة يا بطل 📸 ربطتها بطلبك ${pending.id} ($${pending.total}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
-              await pushHistory(from, "user", "[صورة: لقطة تحويل]", tenant);
-              await pushHistory(from, "assistant", reply, tenant);
-              logEvent("proof_received", { tenantId: tenant.id, phone: from, orderId: pending.id }).catch(() => {});
-              try {
-                await sendWhatsAppMessage(from, reply, tenant);
-              } catch (e) {
-                console.error(`  ❌ فشل الإرسال: ${e.message}`);
-              }
-              console.log(`  📸 إثبات ${pending.id} من ${from} (media=${msg.image.id})`);
-              console.log(`${"─".repeat(60)}\n`);
-            } else {
+          // —— صورة/مستند (إيصال CliQ/محفظة): تحقق AI تلقائي → مدفوع | مراجعة | يدوي ——
+          if ((msg.type === "image" || msg.image?.id || msg.type === "document" || msg.document?.id) && !text) {
+            const mediaId = msg.image?.id || msg.document?.id;
+            const mimeType = msg.document?.mime_type || "image/jpeg";
+            const { handleReceiptImage } = await import("../../media/paymentProof.mjs");
+            const res = await handleReceiptImage({ tenant, phone: from, mediaId, mimeType });
+            if (res.outcome === "no-order") {
               const reply = `وصلتني الصورة يا غالي 📸 بس ما لقيت طلب معلق برقمك. إذا بدك تطلب ابعت "بدي اطلب"، وإذا هاي لقطة تحويل ابعت رقم الطلب معها.`;
               try {
                 await sendWhatsAppMessage(from, reply, tenant);
@@ -188,12 +179,69 @@ async function processWebhookBody(body) {
                 console.error(`  ❌ فشل الإرسال: ${e.message}`);
               }
               console.log(`${"─".repeat(60)}\n`);
+            } else if (res.outcome === "download-failed") {
+              const reply = `وصلتني الصورة بس ما قدرت أحملها 😅 ابعتها مرة تانية لو سمحت.`;
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`  ⚠️ فشل تحميل إيصال ${res.orderId}: ${res.error}`);
+              console.log(`${"─".repeat(60)}\n`);
+            } else if (res.outcome === "manual") {
+              // بدون مفتاح AI: المسار اليدوي — إرفاق + انتظار الموظف
+              const reply = `وصلتني اللقطة يا بطل 📸 ربطتها بطلبك ${res.orderId} ($${res.total}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
+              await pushHistory(from, "user", "[صورة: لقطة تحويل]", tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`  📸 إثبات ${res.orderId} من ${from} (media=${mediaId})`);
+              console.log(`${"─".repeat(60)}\n`);
+            } else {
+              // paid/review: الردود أُرسلت داخل handleReceiptImage
+              console.log(`  🧾 إيصال ${res.orderId} من ${from} → ${res.outcome}`);
+              console.log(`${"─".repeat(60)}\n`);
             }
             continue;
           }
 
           if (!text) {
             console.log(`  📥 رسالة بدون نص من ${from} (type=${msg.type}) - تم تجاهلها`);
+            continue;
+          }
+
+          // —— امتثال واتساب: إلغاء/إعادة الاشتراك ——
+          const { isOptOut, isOptIn, markOptedOut, clearOptOut, notifyStaff } = await import("../../compliance/messaging.mjs");
+          if (isOptOut(text)) {
+            await markOptedOut(tenant?.id, from);
+            const reply = `تم يا غالي ✅ ألغينا اشتراكك وما رح نراسلك بأي عروض. إذا غيّرت رأيك ابعت "اشتراك".`;
+            await pushHistory(from, "user", text, tenant);
+            await pushHistory(from, "assistant", reply, tenant);
+            logEvent("opt_out", { tenantId: tenant?.id, phone: from }).catch(() => {});
+            try {
+              await sendWhatsAppMessage(from, reply, tenant);
+            } catch (e) {
+              console.error(`  ❌ فشل إرسال تأكيد الإلغاء: ${e.message}`);
+            }
+            console.log(`  🚫 إلغاء اشتراك ${from} (${tenant?.id})`);
+            console.log(`${"─".repeat(60)}\n`);
+            continue;
+          }
+          if (isOptIn(text)) {
+            await clearOptOut(tenant?.id, from);
+            const reply = `أهلاً بعودتك يا بطل! 🎉 رجّعنا اشتراكك ورح توصلك عروضنا. كيف بقدر أساعدك اليوم؟`;
+            await pushHistory(from, "user", text, tenant);
+            await pushHistory(from, "assistant", reply, tenant);
+            logEvent("opt_in", { tenantId: tenant?.id, phone: from }).catch(() => {});
+            try {
+              await sendWhatsAppMessage(from, reply, tenant);
+            } catch (e) {
+              console.error(`  ❌ فشل الإرسال: ${e.message}`);
+            }
+            console.log(`${"─".repeat(60)}\n`);
             continue;
           }
 
@@ -214,7 +262,7 @@ async function processWebhookBody(body) {
             const qOrder = await getOrder(orderMatch[1].toLowerCase(), tenant?.id).catch(() => null);
             let reply;
             if (qOrder && qOrder.phone === from) {
-              const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي" }[qOrder.status] || qOrder.status;
+              const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة اليدوية 🔍" }[qOrder.status] || qOrder.status;
               reply = `طلبك ${qOrder.id} — ${(qOrder.items || []).map((i) => i.name).join(" + ")} — الإجمالي $${qOrder.total} — الحالة: ${statusAr}`;
               if (qOrder.status === "pending" && qOrder.paymentUrl) reply += `\nرابط الدفع: ${qOrder.paymentUrl}`;
             } else {
@@ -507,6 +555,8 @@ async function processWebhookBody(body) {
 
           if (result.transfer_to_human) {
             console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
+            // تنبيه الموظف على واتساب (أفضل-جهد، لا يؤخر الرد)
+            notifyStaff(tenant, `عميل يطلب موظفاً: ${from} (${name}) — "${text.slice(0, 120)}"`).catch(() => {});
           }
 
           // —— إنشاء طلب + تعليمات الدفع عند نية الشراء (متاجر) ——
@@ -534,15 +584,25 @@ async function processWebhookBody(body) {
               }
               const wallets = tenant.features?.paymentWallets || [];
               if (wallets.length) {
-                // دفع بالمحافظ: بدون روابط — تحويل + لقطة شاشة + تأكيد بشري
+                // دفع بالمحافظ/CliQ: تحويل + لقطة شاشة + تحقق AI تلقائي
                 const lines = wallets.map((w) => `• ${w.type}: ${w.number}${w.name ? ` (${w.name})` : ""}`).join("\n");
-                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والموظف بيأكدلك الطلب.`;
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
                 console.log(`  💳 طلب ${order.id} $${total} -> محافظ`);
               } else {
                 const baseUrl = process.env.PUBLIC_BASE_URL || `https://kareem-whatsapp-agent.onrender.com`;
-                const { url: payUrl, mock } = await createPaymentLink(order, baseUrl);
-                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}${mock ? " (تجريبي — فعّل STRIPE_SECRET_KEY للدفع الحقيقي)" : ""}`;
-                console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
+                const { url: payUrl } = await createPaymentLink(order, baseUrl);
+                if (payUrl) {
+                  result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}`;
+                  console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
+                } else {
+                  // المسار الأساسي بدون Stripe: تحويل يدوي (CliQ/محفظة) + إيصال
+                  const cliq = tenant.features?.cliq;
+                  const instructions = cliq?.number
+                    ? `حوّل $${total} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
+                    : `ابعت "أريد موظف" ليعطيك رقم التحويل (CliQ/محفظة)`;
+                  result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
+                  console.log(`  💳 طلب ${order.id} $${total} -> تحويل يدوي`);
+                }
               }
               if (isNew) {
                 logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});

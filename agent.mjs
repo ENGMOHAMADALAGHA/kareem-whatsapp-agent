@@ -17,6 +17,7 @@ export {
   clearMemory,
   getMemoryStats,
   isDuplicateMessage,
+  isDuplicateMessageAsync,
 } from "./src/memory/conversations.mjs";
 
 
@@ -47,6 +48,7 @@ export {
   sendWhatsAppMessage,
   sendButtons,
   sendImage,
+  sendTemplate,
   defaultButtonsFor,
 } from "./src/whatsapp/sender.mjs";
 

@@ -34,3 +34,21 @@ export const CART_AFTER_MIN = Number(process.env.CART_AFTER_MIN || 60);
 
 export const MAX_HISTORY = 10;
 export const MEMORY_TTL_MS = 1000 * 60 * 60 * 6;
+
+// ── P1: طوابير دائمة (Redis/BullMQ — اختياري، رجوع تلقائي للذاكرة) ──
+export const REDIS_URL = process.env.REDIS_URL || "";
+export const USE_DURABLE_QUEUE = process.env.USE_DURABLE_QUEUE !== "0" && !!process.env.REDIS_URL;
+
+// ── P1: الفويس (طابور منخفض التزامن + مهلات) ──
+export const VOICE_QUEUE_CONCURRENCY = Number(process.env.VOICE_QUEUE_CONCURRENCY || 2);
+export const VOICE_TRANSCRIBE_TIMEOUT_MS = Number(process.env.VOICE_TRANSCRIBE_TIMEOUT_MS || 45000);
+
+// ── P1: الإرسال الصادر (إعادة + DLQ) ──
+export const OUTBOUND_MAX_RETRIES = Number(process.env.OUTBOUND_MAX_RETRIES || 3);
+export const OUTBOUND_BASE_DELAY_MS = Number(process.env.OUTBOUND_BASE_DELAY_MS || 1000);
+export const OUTBOUND_TIMEOUT_MS = Number(process.env.OUTBOUND_TIMEOUT_MS || 15000);
+
+// ── P1: طاقم العمل والقوالب (امتثال واتساب) ──
+export const STAFF_PHONE = process.env.STAFF_PHONE || "";
+export const WA_TEMPLATE_LANG = process.env.WA_TEMPLATE_LANG || "ar";
+export const WA_FOLLOWUP_TEMPLATE = process.env.WA_FOLLOWUP_TEMPLATE || "";

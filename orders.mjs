@@ -119,10 +119,13 @@ export async function attachProof(id, tenantId, proof) {
   return rowToOrder(row);
 }
 
+// حالات الطلبات المعلقة (تشمل قيد المراجعة اليدوية للإيصالات)
+const OPEN_STATUSES = ["pending", "proof_received", "pending_review"];
+
 // أحدث طلب معلق للرقم (لربط لقطة الشاشة به)
 export async function latestPendingOrder(tenantId, phone) {
   const rows = await tenantDb(tenantId).order.findMany({
-    where: { phone, status: { in: ["pending", "proof_received"] } },
+    where: { phone, status: { in: OPEN_STATUSES } },
     orderBy: { createdAt: "desc" },
     take: 1,
   });
@@ -134,7 +137,7 @@ export async function findRecentPending(tenantId, phone, minutes = 30) {
   const rows = await tenantDb(tenantId).order.findMany({
     where: {
       phone,
-      status: { in: ["pending", "proof_received"] },
+      status: { in: OPEN_STATUSES },
       createdAt: { gte: new Date(Date.now() - minutes * 60 * 1000) },
     },
     orderBy: { createdAt: "desc" },
@@ -143,13 +146,21 @@ export async function findRecentPending(tenantId, phone, minutes = 30) {
   return rowToOrder(rows[0]);
 }
 
-// رابط دفع Stripe — إذا STRIPE_SECRET_KEY موجود يعمل Payment Link حقيقي، وإلا رابط محلي
+// تعليق الطلب للمراجعة اليدوية (إيصال مشبوه/غير مطابق) + حفظ نتيجة فحص الـ AI
+export async function markOrderReview(id, tenantId, review) {
+  const row = await tenantDb(tenantId).order.update({
+    where: { id },
+    data: { proof: review || null, status: "pending_review" },
+  }).catch(() => null);
+  return rowToOrder(row);
+}
+
+// رابط دفع Stripe — المسار اليدوي (CliQ/محافظ + لقطة شاشة) هو الأساسي.
+// بدون STRIPE_SECRET_KEY: لا رابط — يُطلب من العميل التحويل اليدوي وإرسال الإيصال.
 export async function createPaymentLink(order, baseUrl) {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
-    const url = `${(baseUrl || "").replace(/\/$/, "")}/pay/${order.id}`;
-    await setOrderUrl(order.id, order.tenantId, url);
-    return { url, mock: true };
+    return { url: null, mock: true, manual: true };
   }
   const params = new URLSearchParams({
     "payment_method_types[]": "card",

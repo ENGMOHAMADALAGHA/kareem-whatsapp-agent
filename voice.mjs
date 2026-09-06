@@ -10,6 +10,8 @@ function getClient() {
 
 const TIMEOUT_MS = Number(process.env.VOICE_TIMEOUT_MS || 15000);
 const MAX_MB = Number(process.env.VOICE_MAX_MB || 8);
+// مهلة التفريغ نفسه (منفصلة عن مهلة التحميل) — gdyby تجاوزها نرد برسالة بديلة
+const TRANSCRIBE_TIMEOUT_MS = Number(process.env.VOICE_TRANSCRIBE_TIMEOUT_MS || 45000);
 
 async function fetchWithTimeout(url, options = {}, ms = TIMEOUT_MS) {
   const ctrl = new AbortController();
@@ -32,6 +34,10 @@ export async function downloadWhatsAppMedia(mediaId, whatsappToken) {
   if (!meta.ok) throw new Error(metaJson.error?.message || "فشل جلب رابط الميديا");
   const size = metaJson.file_size ? `(${(metaJson.file_size / 1024).toFixed(0)}KB)` : "";
   console.log(`  🎤 ملف صوتي: ${metaJson.mime_type || "?"} ${size}`);
+  // فحص مسبق من الـ metadata قبل سحب أي بايت (يمنع قفزات الذاكرة من base64)
+  if (metaJson.file_size && metaJson.file_size > MAX_MB * 1024 * 1024) {
+    throw new Error(`الملف كبير (${(metaJson.file_size / 1024 / 1024).toFixed(1)}MB) — ابعت فويس أقصر من دقيقة لو سمحت`);
+  }
   // 2. حمّل الملف مع حد حجم
   const fileRes = await fetchWithTimeout(metaJson.url, {
     headers: { Authorization: `Bearer ${whatsappToken}` },
@@ -44,10 +50,32 @@ export async function downloadWhatsAppMedia(mediaId, whatsappToken) {
   return { buffer, mimeType: metaJson.mime_type || "audio/ogg" };
 }
 
-// تفريغ صوتي عبر Gemini (إعادة محاولة + موديل بديل + تلميح لغة)
+// تفريغ صوتي عبر Gemini (إعادة محاولة + موديل بديل + تلميح لغة + مهلة إجمالية)
 export async function transcribeAudio(buffer, mimeType = "audio/ogg", langHint = "ar,en") {
   const ai = getClient();
   if (!ai) return { text: "", reason: "no-api-key" };
+  // حارس الذاكرة: لا نحوّل لم base64 أكثر من الحد (فحص مزدوج بعد التحميل)
+  if (buffer.length > MAX_MB * 1024 * 1024) {
+    return { text: "", reason: "too-large" };
+  }
+  const job = _transcribeInner(ai, buffer, mimeType, langHint);
+  let timer;
+  try {
+    return await Promise.race([
+      job,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("transcribe-timeout")), TRANSCRIBE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    if (e?.message === "transcribe-timeout") return { text: "", reason: "timeout" };
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function _transcribeInner(ai, buffer, mimeType, langHint) {
   const primary = process.env.AI_MODEL || "gemini-flash-lite-latest";
   const models = [primary, "gemini-flash-latest"].filter((v, i, a) => a.indexOf(v) === i);
   const base64 = buffer.toString("base64");

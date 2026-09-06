@@ -3,8 +3,9 @@
 // لا تعرف شيئاً عن AI أو المنطق — تستقبل tenant جاهزاً.
 // ──────────────────────────────────────────────
 import { resolveTenantInput } from "../../tenants.mjs";
-import { WHATSAPP_TOKEN, WHATSAPP_PHONE_ID } from "../config/env.mjs";
+import { WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, OUTBOUND_TIMEOUT_MS, WA_TEMPLATE_LANG } from "../config/env.mjs";
 import { checkLimit, tenantSendKey } from "../security/rateLimit.mjs";
+import { sendWithRetry } from "./outbound.mjs";
 
 // حد الإرسال لكل بوت: 60 رسالة/دقيقة (حماية من حظر Meta)
 async function guardSend(tenant, phoneId) {
@@ -29,6 +30,51 @@ function isDemo(token, phoneId) {
   return !token || token === "DEMO_WHATSAPP_TOKEN" || !phoneId || phoneId === "DEMO_PHONE_ID";
 }
 
+// POST واحد على Graph مع مهلة + إعادة ذكية (429/5xx) + DLQ.
+// الأخطاء تحمل status للتصنيف، وWINDOW_CLOSED لنفاد نافذة 24h.
+async function graphPost(url, token, body, label) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), OUTBOUND_TIMEOUT_MS);
+  try {
+    return await sendWithRetry(async () => {
+      let res;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        });
+      } catch (e) {
+        if (e?.name === "AbortError") {
+          const err = new Error(`تجاوز مهلة الإرسال ${OUTBOUND_TIMEOUT_MS}ms`);
+          err.code = "TIMEOUT";
+          throw err;
+        }
+        throw e;
+      }
+      let data = null;
+      try { data = await res.json(); } catch { /* رد غير JSON */ }
+      if (!res.ok) {
+        const err = new Error(data?.error?.message || `HTTP ${res.status}`);
+        err.status = res.status;
+        err.code = data?.error?.code;
+        // نافذة 24h مغلقة (Meta code 131047) — لا فائدة من إعادة المحاولة
+        if (data?.error?.code === 131047 || /outside.*24|24.*hour|window/i.test(err.message)) {
+          err.code = "WINDOW_CLOSED";
+        }
+        throw err;
+      }
+      return data;
+    }, { label });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function sendWhatsAppMessage(to, text, tenantInput = null) {
   const { tenant, token, phoneId } = await creds(tenantInput);
   await guardSend(tenant, phoneId);
@@ -42,26 +88,12 @@ export async function sendWhatsAppMessage(to, text, tenantInput = null) {
   const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`;
 
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body: text, preview_url: false },
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error(`  ❌ فشل إرسال واتساب [${response.status}]:`, JSON.stringify(data));
-      throw new Error(data.error?.message || `HTTP ${response.status}`);
-    }
+    const data = await graphPost(url, token, {
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: { body: text, preview_url: false },
+    }, `text:${tenant?.id || phoneId}`);
 
     console.log(`  ✅ تم إرسال الرد إلى ${to} | ID: ${data.messages?.[0]?.id || "N/A"}`);
     return data;
@@ -81,13 +113,9 @@ async function sendPayload(to, payload, tenantInput = null) {
     return { simulated: true, to, payload };
   }
   const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, ...payload }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  const data = await graphPost(url, token,
+    { messaging_product: "whatsapp", to, ...payload },
+    `${payload.type}:${tenant?.id || phoneId}`);
   console.log(`  ✅ تم الإرسال (${payload.type}) إلى ${to} | ID: ${data.messages?.[0]?.id || "N/A"}`);
   return data;
 }
@@ -112,6 +140,21 @@ export async function sendImage(to, link, caption = "", tenantInput = null) {
   return sendPayload(to, {
     type: "image",
     image: { link, caption: caption.slice(0, 1024) },
+  }, tenantInput);
+}
+
+// قالب Meta معتمد (للرسائل خارج نافذة 24h) — يتطلب قالباً معتمداً مسبقاً.
+export async function sendTemplate(to, templateName, params = [], tenantInput = null, lang = WA_TEMPLATE_LANG) {
+  if (!templateName) throw new Error("اسم القالب مطلوب");
+  return sendPayload(to, {
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: lang },
+      components: params.length
+        ? [{ type: "body", parameters: params.map((p) => ({ type: "text", text: String(p).slice(0, 256) })) }]
+        : [],
+    },
   }, tenantInput);
 }
 

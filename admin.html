@@ -244,7 +244,7 @@ async function loadOrders() {
     const b = document.createElement("b"); b.textContent = o.id; d.appendChild(b);
     d.appendChild(document.createTextNode(" — " + o.phone + " — $" + o.total + " — " + o.status));
     if (o.proof) { const s = document.createElement("span"); s.className = "text-green-600"; s.textContent = " 📸 لقطة مرفقة"; d.appendChild(s); }
-    if (o.status === "pending" || o.status === "proof_received") {
+    if (o.status === "pending" || o.status === "proof_received" || o.status === "pending_review") {
       const btn = document.createElement("button");
       btn.className = "text-green-600 text-xs font-bold"; btn.textContent = " ✔ تأكيد الدفع";
       btn.onclick = () => confirmOrder(o.id);

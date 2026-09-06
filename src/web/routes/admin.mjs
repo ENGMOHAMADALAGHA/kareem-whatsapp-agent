@@ -195,8 +195,16 @@ export function registerAdminRoutes(app) {
     if (phones.length > 50) return res.status(400).json({ ok: false, error: "الحد الأقصى 50 رقم لكل بث" });
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
-    const results = [];
+    // امتثال: استبعاد من ألغوا الاشتراك قبل الإرسال
+    const { isOptedOut } = await import("../../compliance/messaging.mjs");
+    const eligible = [];
+    const skippedOptOut = [];
     for (const phone of phones) {
+      if (await isOptedOut(tenantId, phone)) skippedOptOut.push(phone);
+      else eligible.push(phone);
+    }
+    const results = [];
+    for (const phone of eligible) {
       try {
         await sendWhatsAppMessage(phone, text, tenant);
         await pushHistory(phone, "assistant", text, tenant);
@@ -207,8 +215,8 @@ export function registerAdminRoutes(app) {
       await new Promise((r) => setTimeout(r, 800)); // تجنب rate limit
     }
     const rec = await saveBroadcast({ tenantId, text, phones, results });
-    logEvent("broadcast", { tenantId, count: phones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id }).catch(() => {});
-    res.json({ ok: true, broadcast: rec });
+    logEvent("broadcast", { tenantId, count: phones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id, skippedOptOut: skippedOptOut.length }).catch(() => {});
+    res.json({ ok: true, broadcast: rec, skippedOptOut });
   });
   app.get("/admin/broadcasts", async (req, res) => {
     const scope = resolveScope(req, req.query.tenant);
