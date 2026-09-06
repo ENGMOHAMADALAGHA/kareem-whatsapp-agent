@@ -791,10 +791,11 @@ export function createApp() {
 
   // صفحة دفع تجريبية (بدون Stripe تعرض زر تأكيد يحفظ paid)
   app.get("/pay/:orderId", async (req, res) => {
-    const order = await getOrder(req.params.orderId);
+    const { getPublicOrder } = await import("./orders.mjs");
+    const order = await getPublicOrder(req.params.orderId);
     if (!order) return res.status(404).send("الطلب غير موجود");
     if (req.query.paid === "1") {
-      await markOrderPaid(order.id);
+      await markOrderPaid(order.id, order.tenantId);
       logEvent("order_paid", { tenantId: order.tenantId, phone: order.phone, orderId: order.id, total: order.total }).catch(() => {});
       // طلب تقييم تلقائي بعد الدفع
       const tenant = await getTenantFull(order.tenantId);
@@ -908,7 +909,11 @@ export function createApp() {
   // ── سلة مهجورة: تشغيل يدوي ──
   app.post("/admin/cart-remind-run", async (req, res) => {
     const afterMinutes = Number(req.body?.afterMinutes ?? 60);
-    const due = await dueCartReminders({ afterMinutes });
+    const scopeTenant = req.clientTenant || req.body?.tenantId || null;
+    const { dueCartRemindersAll } = await import("./orders.mjs");
+    const due = scopeTenant
+      ? await dueCartReminders(scopeTenant, { afterMinutes })
+      : await dueCartRemindersAll({ afterMinutes });
     const sent = [];
     for (const o of due) {
       const tenant = await getTenantFull(o.tenantId);
@@ -917,7 +922,7 @@ export function createApp() {
       try {
         await sendWhatsAppMessage(o.phone, msg, tenant);
         await pushHistory(o.phone, "assistant", msg, tenant);
-        await markCartReminded(o.id);
+        await markCartReminded(o.id, o.tenantId);
         logEvent("cart_reminded", { tenantId: o.tenantId, phone: o.phone, orderId: o.id, total: o.total }).catch(() => {});
         sent.push(o.id);
       } catch (e) {
@@ -1145,10 +1150,10 @@ load();
               continue;
             }
 
-            // —— استعلام عن طلب: "وين طلبي ord_..." ——
+            // —— استعلام عن طلب: "وين طلبي ord_..." (مقيد بنطاق البوت + رقم السائل) ——
             const orderMatch = text.match(/\b(ord_[a-z0-9]+)\b/i);
             if (orderMatch) {
-              const qOrder = await getOrder(orderMatch[1].toLowerCase());
+              const qOrder = await getOrder(orderMatch[1].toLowerCase(), tenant?.id).catch(() => null);
               let reply;
               if (qOrder && qOrder.phone === from) {
                 const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي" }[qOrder.status] || qOrder.status;
@@ -1507,14 +1512,14 @@ export function startServer(port = PORT) {
     global.__remindTimer = setInterval(async () => {
       try {
         // 1) تذكير مواعيد
-        const due = dueReminders({ afterMinutes: Number(process.env.REMIND_AFTER_MIN || 60) });
+        const due = await dueReminders({ afterMinutes: Number(process.env.REMIND_AFTER_MIN || 60) });
         for (const b of due.slice(0, 20)) {
           const tenant = await getTenantFull(b.tenantId);
           if (!tenant) continue;
           const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}.`;
           try {
             await sendWhatsAppMessage(b.phone, msg, tenant);
-            markReminded(b.id);
+            await markReminded(b.id);
             logEvent("booking_reminded", { tenantId: b.tenantId, phone: b.phone, bookingId: b.id }).catch(() => {});
             console.log(`  ⏰ تذكير تلقائي ${b.id} -> ${b.phone}`);
           } catch (e) {
@@ -1522,14 +1527,15 @@ export function startServer(port = PORT) {
           }
         }
         // 2) سلة مهجورة (طلبات pending بدون دفع)
-        const carts = dueCartReminders({ afterMinutes: Number(process.env.CART_AFTER_MIN || 60) });
+        const { dueCartRemindersAll } = await import("./orders.mjs");
+        const carts = await dueCartRemindersAll({ afterMinutes: Number(process.env.CART_AFTER_MIN || 60) });
         for (const o of carts.slice(0, 20)) {
           const tenant = await getTenantFull(o.tenantId);
           if (!tenant) continue;
           const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
           try {
             await sendWhatsAppMessage(o.phone, msg, tenant);
-            markCartReminded(o.id);
+            await markCartReminded(o.id, o.tenantId);
             logEvent("cart_reminded", { tenantId: o.tenantId, phone: o.phone, orderId: o.id, total: o.total }).catch(() => {});
             console.log(`  🛒 سلة مهجورة ${o.id} -> ${o.phone}`);
           } catch (e) {

@@ -1,42 +1,72 @@
+import { tenantDb } from "./src/security/tenantGuard.mjs";
 import { db } from "./db.mjs";
 
+// كل الدوال هنا تمر عبر tenantDb — لا وصول مباشر لـ Prisma.
+
 export async function createOrder({ tenantId, phone, name, items, total, currency = "USD" }) {
-  return db().order.create({
+  const row = await tenantDb(tenantId).order.create({
     data: {
       id: `ord_${Date.now().toString(36)}`,
-      tenantId, phone, name: name || phone,
+      phone, name: name || phone,
       items, total, currency,
     },
-  }).then(rowToOrder);
+  });
+  return rowToOrder(row);
 }
 
-export async function getOrder(id) {
-  return rowToOrder(await db().order.findUnique({ where: { id } }));
+// قراءة مقيدة بالنطاق (للاستخدام الداخلي: webhook/admin)
+export async function getOrder(id, tenantId) {
+  if (!tenantId) throw new Error("getOrder يتطلب tenantId");
+  return rowToOrder(await tenantDb(tenantId).order.findUnique({ where: { id } }));
+}
+
+// صفحة الدفع العامة: تعرض الإجمالي فقط، لكن تُرجع tenantId/phone للمنطق الداخلي (لا تُعرض)
+export async function getPublicOrder(id) {
+  const row = await db().order.findUnique({
+    where: { id },
+    select: { id: true, tenantId: true, phone: true, items: true, total: true, currency: true, status: true },
+  });
+  if (!row) return null;
+  return { id: row.id, tenantId: row.tenantId, phone: row.phone, items: row.items, total: Number(row.total), currency: row.currency, status: row.status };
 }
 
 export async function listOrders(tenantId) {
-  const rows = await db().order.findMany({
-    where: tenantId ? { tenantId } : undefined,
+  const rows = await tenantDb(tenantId).order.findMany({
     orderBy: { createdAt: "desc" },
     take: 500,
   });
   return rows.map(rowToOrder);
 }
 
-export async function markOrderPaid(id) {
-  const row = await db().order.update({
+export async function markOrderPaid(id, tenantId) {
+  // الدفع يُؤكَّد فقط عبر Stripe webhook (ليس عبر ?paid=1) — انظر workflows الدفع
+  const row = await tenantDb(tenantId).order.update({
     where: { id },
     data: { status: "paid", paidAt: new Date() },
   }).catch(() => null);
   return rowToOrder(row);
 }
 
-export async function setOrderUrl(id, url) {
-  await db().order.update({ where: { id }, data: { paymentUrl: url } }).catch(() => null);
+export async function setOrderUrl(id, tenantId, url) {
+  await tenantDb(tenantId).order.update({
+    where: { id }, data: { paymentUrl: url },
+  }).catch(() => null);
 }
 
 // سلة مهجورة: طلبات pending بدون دفع وبدون تذكير ومر عليها N دقيقة
-export async function dueCartReminders({ afterMinutes = 60 } = {}) {
+export async function dueCartReminders(tenantId, { afterMinutes = 60 } = {}) {
+  const rows = await tenantDb(tenantId).order.findMany({
+    where: {
+      status: "pending",
+      cartRemindedAt: null,
+      createdAt: { lt: new Date(Date.now() - afterMinutes * 60 * 1000) },
+    },
+  });
+  return rows.map(rowToOrder);
+}
+
+// نسخة عامة للمجدول (يجمع كل البوتات ثم يعالج كل نطاق على حدة)
+export async function dueCartRemindersAll({ afterMinutes = 60 } = {}) {
   const rows = await db().order.findMany({
     where: {
       status: "pending",
@@ -47,8 +77,8 @@ export async function dueCartReminders({ afterMinutes = 60 } = {}) {
   return rows.map(rowToOrder);
 }
 
-export async function markCartReminded(id) {
-  await db().order.update({
+export async function markCartReminded(id, tenantId) {
+  await tenantDb(tenantId).order.update({
     where: { id }, data: { cartRemindedAt: new Date() },
   }).catch(() => null);
 }
@@ -68,7 +98,7 @@ export async function createPaymentLink(order, baseUrl) {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
     const url = `${(baseUrl || "").replace(/\/$/, "")}/pay/${order.id}`;
-    await setOrderUrl(order.id, url);
+    await setOrderUrl(order.id, order.tenantId, url);
     return { url, mock: true };
   }
   const params = new URLSearchParams({
@@ -91,6 +121,6 @@ export async function createPaymentLink(order, baseUrl) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || "Stripe failed");
-  await setOrderUrl(order.id, data.url);
+  await setOrderUrl(order.id, order.tenantId, data.url);
   return { url: data.url, mock: false, sessionId: data.id };
 }
