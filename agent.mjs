@@ -22,6 +22,10 @@ import {
   dueReminders,
   markReminded,
   cancelAppointment,
+  joinWaitingList,
+  listWaiting,
+  popWaiting,
+  removeFromWaiting,
 } from "./bookings.mjs";
 import { downloadWhatsAppMedia, transcribeAudio } from "./voice.mjs";
 import {
@@ -1012,7 +1016,30 @@ load();
   app.post("/admin/appointments/:id/cancel", async (req, res) => {
     const b = await cancelAppointment(req.params.id);
     if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
-    res.json({ ok: true, booking: b });
+    // تعبئة تلقائية: أول واحد بالانتظار ياخذ الموعد
+    let offered = null;
+    try {
+      const next = await popWaiting(b.tenantId, b.service);
+      if (next) {
+        const tenant = await getTenantFull(b.tenantId);
+        const msg = `خبر حلو يا غالي 🎉 فضي موعد ${b.service || ""} — الساعة ${b.slot || ""}. رد بـ "تم" خلال ساعة لتأكيده، أو تجاهل الرسالة.`;
+        if (tenant) {
+          await sendWhatsAppMessage(next.phone, msg, tenant).catch(() => {});
+          await pushHistory(next.phone, "assistant", msg, tenant);
+        }
+        await setBookingState(b.tenantId, next.phone, { step: "offer", service: b.service, slot: b.slot, day: b.day });
+        await removeFromWaiting(next.id);
+        offered = next.phone;
+        console.log(`  📋 عرض موعد ملغي ${b.id} على ${offered}`);
+      }
+    } catch (e) {
+      console.error(`  ❌ خطأ تعبئة الانتظار: ${e.message}`);
+    }
+    res.json({ ok: true, booking: b, offeredTo: offered });
+  });
+  app.get("/admin/waiting", async (req, res) => {
+    const list = await listWaiting(req.query.tenant, req.query.service);
+    res.json({ count: list.length, waiting: list });
   });
 
   // ── POST /webhook : استقبال الرسائل ──
@@ -1167,6 +1194,9 @@ load();
             // —— تدفق الحجز (للعيادات) قبل الـ AI ——
             const wantsBooking = tenant?.features?.booking && /(حجز|موعد|احجز|book|appointment)/i.test(text + " " + (buttonId || ""));
             const bookingState = await getBookingState(tenant?.id, from);
+            // —— فرز أولي Triage (أعراض الأسنان) ——
+            const triageOn = tenant?.features?.booking && tenant?.businessType === "dental";
+            const symptomHit = triageOn && !bookingState && /(وجع|ألم|يوجع|يؤلم|ورم|منتفخ|انتفاخ|كسر|مكسور|انكسر|نزيف|دم|حرارة|سخونة|سخن|خراج|حساسية|حساس|بارد|ساخن|ضرس العقل|pain|ache|swell|swollen|broken|bleed|fever|abscess|sensitive)/i.test(text);
             let result = null;
             let handled = false;
 
@@ -1186,6 +1216,134 @@ load();
                 console.error(`  ❌ فشل الإرسال: ${sendErr.message}`);
               }
               console.log(`  🤖 ${tenant?.botName} -> intent=${result.intent} (زر ${buttonId})`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 1ب) بدء الفرز: سؤال المكان
+            if (symptomHit) {
+              await setBookingState(tenant.id, from, { step: "triage_q1", answers: { symptom: text.slice(0, 200) } });
+              const reply = `سلامتك يا غالي 🙏 عشان نوجهك صح، وين الألم بالضبط؟ (ضرس / لثة / فك)`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendButtons(from, reply, [
+                  { id: "pain_tooth", title: "🦷 ضرس" },
+                  { id: "pain_gum", title: "لثة" },
+                  { id: "pain_jaw", title: "فك" },
+                ], tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+              }
+              console.log(`  🩺 بدء فرز ${tenant.id} للعميل ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 1ج) الفرز س2: المدة
+            if (bookingState?.step === "triage_q1") {
+              const answers = { ...(bookingState.answers || {}), place: text.slice(0, 100) };
+              await setBookingState(tenant.id, from, { step: "triage_q2", answers });
+              const reply = `تمام، ومن متى بلش الألم؟ (اليوم / من أيام / من أسابيع)`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 1د) الفرز س3: علامات الخطر + التصنيف
+            if (bookingState?.step === "triage_q2") {
+              const answers = { ...(bookingState.answers || {}), since: text.slice(0, 100) };
+              await setBookingState(tenant.id, from, { step: "triage_q3", answers });
+              const reply = `آخر سؤال يا غالي: هل عندك أي من هاي؟ (ورم / حرارة / نزيف / ألم لا يُحتمل) — ابعت "لا" إذا ما في شي منها.`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendButtons(from, reply, [
+                  { id: "red_swelling", title: "ورم" },
+                  { id: "red_none", title: "لا، ما في" },
+                ], tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+              }
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 1هـ) التصنيف: طارئ أم عادي
+            if (bookingState?.step === "triage_q3") {
+              const red = /(ورم|منتفخ|انتفاخ|حرارة|سخونة|سخن|نزيف|دم|كسر|مكسور|انكسر|خراج|لا يحتمل|لا يحتمل|شديد جدا|swell|fever|bleed|broken|abscess|red_swelling)/i.test(text + " " + (buttonId || ""));
+              const answers = { ...(bookingState.answers || {}), redFlags: red ? text.slice(0, 100) : "لا" };
+              const summary = `العرض: ${answers.symptom || ""} | المكان: ${answers.place || ""} | المدة: ${answers.since || ""} | علامات: ${answers.redFlags}`;
+              logEvent("triage", { tenantId: tenant.id, phone: from, emergency: red, summary: summary.slice(0, 300) }).catch(() => {});
+              if (red) {
+                await setBookingState(tenant.id, from, null);
+                const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: "حالة طارئة 🆘", day: "اليوم", slot: "أقرب وقت" });
+                const reply = `سلامتك أولاً يا غالي 🆘 الأعراض اللي ذكرتها تحتاج تدخل سريع — حجزتلك موعد طارئ اليوم (${booking.id}). تعال مباشرة على العيادة، والدكتور بانتظارك. إذا الوضع خطير اتصل فينا فوراً.`;
+                await pushHistory(from, "user", text, tenant);
+                await pushHistory(from, "assistant", reply, tenant);
+                try {
+                  await sendWhatsAppMessage(from, reply, tenant);
+                } catch (e) {
+                  console.error(`  ❌ فشل الإرسال: ${e.message}`);
+                }
+                console.log(`  🆘 حالة طارئة ${tenant.id} ${from} (${booking.id})`);
+                console.log(`${"─".repeat(60)}\n`);
+                continue;
+              }
+              // عادي → كمّل للحجز مع تلخيص الإجابات في الذاكرة
+              await setBookingState(tenant.id, from, { step: "slot", triage: summary.slice(0, 300) });
+              const slots = (tenant.features.bookingSlots || []).join("، ");
+              const reply = `تمام يا غالي، حالتك تبدو عادية 😊 سجلت ملاحظاتك للدكتور. اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00).`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+              }
+              console.log(`  🩺 فرز عادي → حجز ${tenant.id} ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 1و) الانضمام لقائمة الانتظار
+            if (tenant?.features?.booking && /(انتظار|ضيفني|قائمة الانتظار|waitlist|waiting)/i.test(text)) {
+              const service = (tenant.products || [])[0]?.name || "موعد";
+              const w = await joinWaitingList({ tenantId: tenant.id, phone: from, name, service });
+              const reply = `تم يا غالي ✅ انضميت لقائمة الانتظار (${w.id}) لخدمة ${service}. أول ما يفضى موعد بنخبرك فوراً هنا.`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              logEvent("waiting_join", { tenantId: tenant.id, phone: from, service }).catch(() => {});
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`  📋 انضمام انتظار ${tenant.id} ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+
+            // 1ز) قبول عرض موعد من الانتظار
+            if (bookingState?.step === "offer" && /^(تم|موافق|نعم|ok|yes)$/i.test(text.trim())) {
+              const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: bookingState.service || "موعد", day: bookingState.day || "أقرب يوم", slot: bookingState.slot || "" });
+              await setBookingState(tenant.id, from, null);
+              const reply = `ممتاز! 🎉 تم تأكيد موعدك ${booking.service} (${booking.id}). بنتشرف فيك!`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: booking.id, fromWaiting: true }).catch(() => {});
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              console.log(`  📋 تأكيد من الانتظار ${booking.id} ${from}`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
             }

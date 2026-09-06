@@ -53,6 +53,39 @@ export async function cancelAppointment(id) {
   return rowToBooking(row);
 }
 
+// قائمة الانتظار: حجوزات بحالة waiting (تُعبأ تلقائياً عند الإلغاء)
+export async function joinWaitingList({ tenantId, phone, name, service }) {
+  const row = await db().appointment.create({
+    data: {
+      id: `wt_${Date.now().toString(36)}`,
+      tenantId, phone, name: name || phone, service, day: "انتظار", slot: "أول فرصة",
+      status: "waiting",
+    },
+  });
+  return rowToBooking(row);
+}
+
+export async function listWaiting(tenantId, service) {
+  const rows = await db().appointment.findMany({
+    where: {
+      tenantId, status: "waiting",
+      ...(service ? { service } : {}),
+    },
+    orderBy: { createdAt: "asc" },
+    take: 20,
+  });
+  return rows.map(rowToBooking);
+}
+
+export async function popWaiting(tenantId, service) {
+  const list = await listWaiting(tenantId, service);
+  return list[0] || null;
+}
+
+export async function removeFromWaiting(id) {
+  await db().appointment.delete({ where: { id } }).catch(() => null);
+}
+
 // حالة الحجز المؤقتة — دائمة في DB (لا تضيع عند restart)
 import { storeGet, storeSet, storeDel } from "./store.mjs";
 const bkKey = (tenantId, phone) => `booking:${tenantId}::${phone}`;
