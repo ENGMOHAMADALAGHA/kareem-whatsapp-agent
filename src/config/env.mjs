@@ -23,6 +23,8 @@ export const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://kareem-wh
 export const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 export const CRM_WEBHOOK_URL = process.env.CRM_WEBHOOK_URL || "";
 
+export const META_APP_SECRET = process.env.META_APP_SECRET || "";
+
 export const VOICE_TIMEOUT_MS = Number(process.env.VOICE_TIMEOUT_MS || 15000);
 export const VOICE_MAX_MB = Number(process.env.VOICE_MAX_MB || 8);
 

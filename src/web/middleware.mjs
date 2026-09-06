@@ -1,4 +1,5 @@
-import { ADMIN_USER, ADMIN_PASS } from "../config/env.mjs";
+import crypto from "node:crypto";
+import { ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
 import { getTenantFull } from "../../tenants.mjs";
 
 // ── حماية /admin: سوبر أدمن (Basic) أو عميل (JWT) ──
@@ -34,6 +35,28 @@ export const adminAuth = async (req, res, next) => {
   res.setHeader("WWW-Authenticate", 'Basic realm="admin"');
   return res.status(401).json({ ok: false, error: "مطلوب تسجيل دخول المدير" });
 };
+// ── تحقق توقيع Meta (X-Hub-Signature-256) لمنع حقن Webhooks مزيفة ──
+// يتطلب META_APP_SECRET + rawBody (يُحفظ عبر express.json verify في app.mjs)
+export function verifyMetaSignature(req, res, next) {
+  if (!META_APP_SECRET) {
+    console.warn("  ⚠️ META_APP_SECRET غير مضبوط — التحقق من التوقيع معطّل (للتطوير فقط)");
+    return next();
+  }
+  const sig = req.headers["x-hub-signature-256"] || "";
+  if (!sig.startsWith("sha256=") || !req.rawBody) {
+    console.warn("  ❌ webhook بدون توقيع صالح — مرفوض");
+    return res.sendStatus(403);
+  }
+  const expected = "sha256=" + crypto.createHmac("sha256", META_APP_SECRET).update(req.rawBody).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    console.warn("  ❌ توقيع webhook غير صالح — مرفوض");
+    return res.sendStatus(403);
+  }
+  next();
+}
+
 // إجبار نطاق العميل على بوته في كل الطلبات
 export function scopeClient(req, res, next) {
   if (req.clientTenant) {

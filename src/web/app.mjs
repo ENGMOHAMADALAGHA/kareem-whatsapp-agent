@@ -16,8 +16,12 @@ import { startSchedulers } from "../jobs/schedulers.mjs";
 export function createApp() {
   const app = express();
 
-  // ضروري لقراءة JSON من واتساب
-  app.use(express.json());
+  // ضروري لقراءة JSON من واتساب + حفظ الخام للتحقق من التوقيع
+  app.use(express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }));
   app.use(express.urlencoded({ extended: true }));
   app.use("/admin", adminAuth);
   app.use("/admin", scopeClient);

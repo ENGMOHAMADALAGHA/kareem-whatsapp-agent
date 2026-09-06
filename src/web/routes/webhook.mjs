@@ -49,7 +49,10 @@ import { getHistory, pushHistory, isDuplicateMessage } from "../../memory/conver
 import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox/service.mjs";
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
 import { updateTenant } from "../../../tenants.mjs";
+import { webhookQueue } from "../../jobs/queue.mjs";
 import { createClientUser, listClientUsers } from "../../../portal.mjs";
+
+import { verifyMetaSignature } from "../middleware.mjs";
 
 export function registerWebhookRoutes(app) {
   app.get("/webhook", async (req, res) => {
@@ -71,7 +74,7 @@ export function registerWebhookRoutes(app) {
     console.warn(`  ❌ فشل التحقق: token المتوقع="${expected}" المستلم="${token}"`);
     return res.sendStatus(403);
   });
-  app.post("/webhook", (req, res) => {
+  app.post("/webhook", verifyMetaSignature, (req, res) => {
     const body = req.body;
 
     // التحقق المبدئي من نوع الحدث
@@ -83,10 +86,8 @@ export function registerWebhookRoutes(app) {
     // رد فوري لواتساب (يمنع إعادة الإرسال = يمنع الرد المكرر)
     res.status(200).send("EVENT_RECEIVED");
 
-    // المعالجة بالخلفية
-    processWebhookBody(body).catch((err) => {
-      console.error(`  ❌ خطأ في معالجة Webhook: ${err.message}`, err.stack);
-    });
+    // المعالجة عبر الطابور (تزامن محدود + إعادة + توثيق الميت)
+    webhookQueue.enqueue(`webhook:${body.entry?.[0]?.id || "event"}`, () => processWebhookBody(body));
   });
 }
 

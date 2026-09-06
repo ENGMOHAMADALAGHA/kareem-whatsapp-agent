@@ -51,7 +51,12 @@ import { updateTenant } from "../../../tenants.mjs";
 import { createClientUser, listClientUsers } from "../../../portal.mjs";
 import { WHATSAPP_TOKEN } from "../../config/env.mjs";
 
+import { webhookQueue } from "../../jobs/queue.mjs";
+
 export function registerAdminRoutes(app) {
+  app.get("/admin/queue", (req, res) => {
+    res.json({ ok: true, ...webhookQueue.stats() });
+  });
   app.get("/admin/tenants", async (req, res) => {
     const list = await listTenants();
     res.json({ count: list.length, tenants: list, memory: getMemoryStats() });
