@@ -53,6 +53,26 @@ export async function cancelAppointment(id) {
   return rowToBooking(row);
 }
 
+// ── منع التعارض: هل الموعد محجوز؟ ──
+export async function countSlotBookings(tenantId, day, slot) {
+  return db().appointment.count({
+    where: { tenantId, day, slot, status: "confirmed" },
+  });
+}
+
+export async function isSlotTaken(tenantId, day, slot, capacity = 1) {
+  return (await countSlotBookings(tenantId, day, slot)) >= capacity;
+}
+
+// أقرب الأوقات الفارغة لنفس اليوم
+export async function freeSlots(tenantId, day, allSlots, capacity = 1) {
+  const free = [];
+  for (const s of allSlots || []) {
+    if (!(await isSlotTaken(tenantId, day, s, capacity))) free.push(s);
+  }
+  return free;
+}
+
 // قائمة الانتظار: حجوزات بحالة waiting (تُعبأ تلقائياً عند الإلغاء)
 export async function joinWaitingList({ tenantId, phone, name, service }) {
   const row = await db().appointment.create({

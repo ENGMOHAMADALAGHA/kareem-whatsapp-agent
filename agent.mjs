@@ -26,6 +26,8 @@ import {
   listWaiting,
   popWaiting,
   removeFromWaiting,
+  isSlotTaken,
+  freeSlots,
 } from "./bookings.mjs";
 import { downloadWhatsAppMedia, transcribeAudio } from "./voice.mjs";
 import {
@@ -1372,7 +1374,33 @@ load();
               if (slotMatch) {
                 const slot = slotMatch[1];
                 const service = (tenant.products || [])[0]?.name || "موعد";
-                const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day: "أقرب يوم متاح", slot });
+                const day = bookingState.day || "أقرب يوم متاح";
+                const capacity = tenant.features?.slotCapacity || 1;
+                // منع التعارض: إذا محجوز اعرض البدائل
+                if (await isSlotTaken(tenant.id, day, slot, capacity)) {
+                  const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots, capacity);
+                  const reply = free.length
+                    ? `للأسف الساعة ${slot} محجوزة يا غالي 😅 بس الفارغ عندنا: ${free.join("، ")}. اختر واحد منهم؟ أو ابعت "انتظار" لأضيفك لقائمة الانتظار.`
+                    : `للأسف كل الأوقات محجوزة اليوم 😅 أضفتك تلقائياً لقائمة الانتظار، وأول ما يفضى موعد بخبرك فوراً.`;
+                  if (!free.length) {
+                    await joinWaitingList({ tenantId: tenant.id, phone: from, name, service });
+                  }
+                  await pushHistory(from, "user", text, tenant);
+                  await pushHistory(from, "assistant", reply, tenant);
+                  try {
+                    if (free.length) {
+                      await sendButtons(from, reply, free.slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+                    } else {
+                      await sendWhatsAppMessage(from, reply, tenant);
+                    }
+                  } catch (e) {
+                    console.error(`  ❌ فشل الإرسال: ${e.message}`);
+                  }
+                  console.log(`  ⚠️ تعارض ${tenant.id} ${day} ${slot} — عُرضت البدائل`);
+                  console.log(`${"─".repeat(60)}\n`);
+                  continue;
+                }
+                const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day, slot });
                 await setBookingState(tenant.id, from, null);
                 const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
                 result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
