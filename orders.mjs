@@ -137,3 +137,24 @@ export async function createPaymentLink(order, baseUrl) {
   await setOrderUrl(order.id, order.tenantId, data.url);
   return { url: data.url, mock: false, sessionId: data.id };
 }
+
+// تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
+// تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
+export function detectTotal(tenant, userText, replyText) {
+  const all = `${userText} ${replyText}`;
+  const m = all.match(/\$(\d+(?:\.\d+)?)/g);
+  if (m && m.length) {
+    const nums = m.map((s) => parseFloat(s.replace("$", "")));
+    return Math.max(...nums);
+  }
+  const prices = (tenant.products || []).map((p) => p.price);
+  const max = Math.max(...prices, 0);
+  return max + (tenant.deliveryFee || 0);
+}
+export function detectItem(tenant, userText, replyText) {
+  const all = `${userText} ${replyText}`;
+  for (const p of tenant.products || []) {
+    if (p.name && all.includes(p.name.split(" ")[0])) return p.name;
+  }
+  return (tenant.products || []).map((p) => p.name).join(" + ") || "طلب";
+}
