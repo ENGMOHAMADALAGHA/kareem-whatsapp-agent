@@ -499,12 +499,22 @@ async function processWebhookBody(body) {
             !tenant?.features?.booking;
           if (wantsPay) {
             try {
-              const total = detectTotal(tenant, text, result.reply);
-              const order = await createOrder({
-                tenantId: tenant.id, phone: from, name,
-                items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
-                total, currency: "USD",
-              });
+              let total = detectTotal(tenant, text, result.reply);
+              // منع التكرار: طلب معلق لنفس الرقم خلال 30 دقيقة يُعاد استخدامه
+              const { findRecentPending } = await import("../../../orders.mjs");
+              let order = await findRecentPending(tenant.id, from, 30);
+              let isNew = false;
+              if (!order) {
+                order = await createOrder({
+                  tenantId: tenant.id, phone: from, name,
+                  items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
+                  total, currency: "USD",
+                });
+                isNew = true;
+              } else {
+                total = order.total; // التزم بإجمالي الطلب الأصلي
+                console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه بدل الجديد`);
+              }
               const wallets = tenant.features?.paymentWallets || [];
               if (wallets.length) {
                 // دفع بالمحافظ: بدون روابط — تحويل + لقطة شاشة + تأكيد بشري
@@ -517,7 +527,9 @@ async function processWebhookBody(body) {
                 result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}${mock ? " (تجريبي — فعّل STRIPE_SECRET_KEY للدفع الحقيقي)" : ""}`;
                 console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
               }
-              logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});
+              if (isNew) {
+                logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});
+              }
               await updateLastAssistant(from, result.reply, tenant);
             } catch (e) {
               console.error(`  ❌ خطأ إنشاء الطلب: ${e.message}`);

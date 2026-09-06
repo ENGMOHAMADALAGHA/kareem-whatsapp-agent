@@ -126,6 +126,20 @@ export async function latestPendingOrder(tenantId, phone) {
   return rowToOrder(rows[0]);
 }
 
+// منع الطلب المكرر: طلب معلق لنفس الرقم خلال N دقيقة يُعاد استخدامه بدل الجديد
+export async function findRecentPending(tenantId, phone, minutes = 30) {
+  const rows = await tenantDb(tenantId).order.findMany({
+    where: {
+      phone,
+      status: { in: ["pending", "proof_received"] },
+      createdAt: { gte: new Date(Date.now() - minutes * 60 * 1000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+  });
+  return rowToOrder(rows[0]);
+}
+
 // رابط دفع Stripe — إذا STRIPE_SECRET_KEY موجود يعمل Payment Link حقيقي، وإلا رابط محلي
 export async function createPaymentLink(order, baseUrl) {
   const key = process.env.STRIPE_SECRET_KEY;

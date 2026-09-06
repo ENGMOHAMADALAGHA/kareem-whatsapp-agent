@@ -249,19 +249,32 @@ export function registerAdminRoutes(app) {
     const due = scopeTenant
       ? await dueCartReminders(scopeTenant, { afterMinutes })
       : await dueCartRemindersAll({ afterMinutes });
-    const sent = [];
+    // تجميع: رسالة واحدة لكل رقم بدل رسالة لكل طلب
+    const byPhone = new Map();
     for (const o of due) {
-      const tenant = await getTenantFull(o.tenantId);
+      const key = `${o.tenantId}::${o.phone}`;
+      if (!byPhone.has(key)) byPhone.set(key, []);
+      byPhone.get(key).push(o);
+    }
+    const sent = [];
+    for (const [, list] of byPhone) {
+      const first = list[0];
+      const tenant = await getTenantFull(first.tenantId);
       if (!tenant) continue;
-      const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
+      const lines = list.map((o) => `• ${o.id} ($${o.total})`).join("\n");
+      const msg = list.length === 1
+        ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} ($${first.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${first.paymentUrl || "ابعت تم للتأكيد"}`
+        : `يا هلا يا بطل! 👋 عندك ${list.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
       try {
-        await sendWhatsAppMessage(o.phone, msg, tenant);
-        await pushHistory(o.phone, "assistant", msg, tenant);
-        await markCartReminded(o.id, o.tenantId);
-        logEvent("cart_reminded", { tenantId: o.tenantId, phone: o.phone, orderId: o.id, total: o.total }).catch(() => {});
-        sent.push(o.id);
+        await sendWhatsAppMessage(first.phone, msg, tenant);
+        await pushHistory(first.phone, "assistant", msg, tenant);
+        for (const o of list) {
+          await markCartReminded(o.id, o.tenantId);
+        }
+        logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: list.map((o) => o.id) }).catch(() => {});
+        sent.push(...list.map((o) => o.id));
       } catch (e) {
-        console.error(`  ❌ فشل تذكير السلة ${o.id}: ${e.message}`);
+        console.error(`  ❌ فشل تذكير السلة لـ ${first.phone}: ${e.message}`);
       }
     }
     res.json({ ok: true, due: due.length, sent });
