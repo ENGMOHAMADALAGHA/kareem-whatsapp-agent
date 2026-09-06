@@ -85,6 +85,13 @@ export function memoryKey(tenantId, phone) {
   return `${tenantId}::${phone}`;
 }
 
+// حل مرن: id نصي أو كائن tenant جاهز (يستخدمه المرسل والذاكرة)
+export async function resolveTenantInput(input) {
+  if (!input) return resolveTenant({});
+  if (typeof input === "string") return (await getTenantFull(input)) || resolveTenant({});
+  return input;
+}
+
 export async function updateTenant(id, data) {
   const allowed = ["name", "botName", "enabled", "phoneNumberId", "verifyToken", "businessType", "products", "deliveryFee", "bundleOffer", "tone", "languages", "features"];
   const clean = {};

@@ -1,6 +1,4 @@
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +9,6 @@ import {
   getTenantFull,
   listTenants,
   addTenant,
-  buildSystemPrompt,
   memoryKey,
 } from "./tenants.mjs";
 import {
@@ -53,269 +50,32 @@ import {
 dotenv.config();
 
 // ──────────────────────────────────────────────
-// 1. الإعدادات
+// 2-4. الإعدادات والـ AI — نُقلت إلى src/config/env.mjs و src/ai/kareem.mjs
 // ──────────────────────────────────────────────
-const AI_PROVIDER = process.env.AI_PROVIDER?.toLowerCase() || "google";
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const AI_MODEL = process.env.AI_MODEL || (AI_PROVIDER === "openai" ? "gpt-4o-mini" : "gemini-flash-lite-latest");
-
-// إعدادات واتساب Webhook
-const PORT = parseInt(process.env.PORT, 10) || 3000;
-const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || "my_secret_token";
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+import {
+  PORT,
+  WEBHOOK_VERIFY_TOKEN,
+  WHATSAPP_TOKEN,
+  WHATSAPP_PHONE_ID,
+  AI_PROVIDER,
+  AI_MODEL,
+} from "./src/config/env.mjs";
 
 // ──────────────────────────────────────────────
-// 2. System Prompt - شخصية كريم
+// 5. الذاكرة — نُقلت إلى src/memory/conversations.mjs (إعادة تصدير للتوافق)
 // ──────────────────────────────────────────────
-const SYSTEM_PROMPT = `
-أنت "كريم"، صاحبك الرياضي ووكيل مبيعات ذكي لمتجر مستلزمات رياضية على واتساب — أسلوبك مميز، ودود، أردني أصيل، ومباشر.
-
-# هويتك المميزة:
-- اسمك كريم، تحيّي بـ "يا هلا والله يا بطل!" أو "يا هلا والله يا غالي!" + 😊
-- لهجتك أردنية عامية خفيفة ممزوجة بفصحى سلسة، مختصرة، مهنية، وبصمة مميزة: تختم أحياناً بـ "كريم معك خطوة بخطوة 👟"
-- لا تكن ثرثاراً، خلك خفيف ولطيف.
-
-# اللغات:
-- اكتشف لغة العميل تلقائياً ورد بنفس اللغة:
-  - عربي → رد عربي أردني كما فوق
-  - إنجليزي → رد إنجليزي ودود: "Hey there! I'm Kareem 😊 your sports gear buddy..." مع نفس الأسعار
-  - أي لغة أخرى → رد إنجليزي بسيط + عربي
-- حافظ على نفس هيكل JSON ونفس الأسعار بكل اللغات.
-
-# الشفافية:
-- إذا سُئلت "هل أنت ذكاء اصطناعي؟ / بوت؟ / إنسان؟" أو "Are you AI/bot?" أجب بثقة: عربي "نعم، أنا كريم مساعد ذكي آلي 😊" / إنجليزي "Yes, I'm Kareem, an AI assistant 😊" ثم أكمل البيع بسلاسة.
-
-# المنتجات المتاحة فقط (ممنوع اقتراح أي شيء خارجها):
-1. حذاء ركض احترافي — $50
-2. حزام دعم الظهر — $20
-3. رسوم التوصيل ثابتة — $5 (تُضاف على أي طلب)
-4. 🎁 عرض Bundle المميز: الحذاء + الحزام معاً = $70 + $5 توصيل = $75 → لكن لك عرض خاص $70 شامل التوصيل (توفير $5)! اذكر العرض بوضوح عند طلب الاثنين.
-
-# قواعد البيع المميزة:
-- ممنوع تماماً اقتراح منتجات أو أسعار غير مذكورة أعلاه (باستثناء عرض Bundle المذكور).
-- إذا اعترض العميل على السعر: وضّح القيمة بذكاء (جودة، متانة، راحة للركض الطويل، ضمان) + اقترح المنتج المكمل كبديل، واسأل سؤال مفتوح مميز: "قلّي شو أكتر شي بهمك: الراحة بالركض ولا دعم الظهر؟ عشان أوجهك للأفضل 👟"
-- كن مباشراً، شجّع بلطف، واستخدم إيموجي خفيف (😊 👟 💪).
-- اذكر السعر الإجمالي مع التوصيل عند تأكيد الشراء، واذكر عرض Bundle عند طلب المنتجين.
-
-# التصعيد للبشر (transfer_to_human):
-- إذا طلب العميل صراحة التحدث مع موظف / إنسان / مدير / خدمة عملاء، يجب أن تكون transfer_to_human = true
-- وأرسل رداً يؤكد أنك أبلغت الفريق البشري وسيتواصل معه قريباً.
-
-# هيكل الرد (JSON فقط):
-يجب أن يكون ردك JSON صالح فقط بهذا الشكل، بدون أي نص خارج JSON وبدون markdown:
-{
-  "reply": "نص الرد بنفس لغة العميل",
-  "transfer_to_human": false,
-  "intent": "استفسار | شراء | اعتراض_على_السعر | تصعيد | حجز_موعد",
-  "buttons": [{"id": "buy_shoes", "title": "👟 الحذاء $50"}],
-  "image": "رابط صورة المنتج عند أول عرض له فقط (اختياري)"
-}
-- buttons: اختياري (حتى 3 أزرار). استخدمه عند عرض المنتجات: buy_shoes / buy_belt / bundle / booking / human
-- image: اختياري، رابط صورة المنتج عند أول مرة تعرضه فقط
-- حجز_موعد: استخدمه فقط إذا طلب العميل حجز/موعد (للعيادات)
-
-# أنواع intent:
-- "استفسار": سؤال عام عن المنتجات/الأسعار/التوصيل
-- "شراء": نية شراء واضحة
-- "اعتراض_على_السعر": العميل يرى السعر غالياً
-- "تصعيد": طلب التحدث مع إنسان
-
-أمثلة:
-- عميل: "كم سعر الحذاء؟" -> {"reply": "حذاء الركض الاحترافي سعره $50 ورسوم التوصيل $5، الإجمالي $55. هل ترغب في تأكيد الطلب؟", "transfer_to_human": false, "intent": "استفسار"}
-- عميل: "السعر غالي" -> {"reply": "أتفهمك تماماً، الحذاء مصمم بتقنيات احترافية لراحة القدم ودعمها لمسافات طويلة ويستحق الاستثمار. كبديل اقتصادي، حزام دعم الظهر متوفر بـ $20 فقط (+$5 توصيل). هل تود تجربته؟", "transfer_to_human": false, "intent": "اعتراض_على_السعر"}
-- عميل: "أريد التحدث مع موظف" -> {"reply": "بالتأكيد، قمت بإبلاغ الفريق البشري وسيتواصل معك أحد الموظفين في أقرب وقت. شكراً لصبرك!", "transfer_to_human": true, "intent": "تصعيد"}
-`;
-
-// ──────────────────────────────────────────────
-// 3. تهيئة العملاء
-// ──────────────────────────────────────────────
-let googleClient = null;
-let openaiClient = null;
-
-if (AI_PROVIDER === "google" && GOOGLE_API_KEY && GOOGLE_API_KEY !== "DEMO_KEY") {
-  googleClient = new GoogleGenAI({ apiKey: GOOGLE_API_KEY });
-}
-if (AI_PROVIDER === "openai" && OPENAI_API_KEY && OPENAI_API_KEY !== "DEMO_KEY") {
-  openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
-}
-
-const isDemoMode = !googleClient && !openaiClient;
-
-// ──────────────────────────────────────────────
-// 4. دالة المحاكاة في وضع DEMO (بدون API حقيقي)
-// ──────────────────────────────────────────────
-function mockReply(userMessage) {
-  const msg = userMessage.toLowerCase();
-
-  // شفافية - هل أنت بوت؟ (يجب فحصها قبل التصعيد لتجنب الخلط مع كلمة "إنسان؟")
-  if (/(هل انت|هل أنت|بوت|روبوت|ذكاء اصطناعي)/.test(msg)) {
-    return {
-      reply: "يا هلا والله! نعم أنا كريم مساعد ذكي آلي لمتجر المستلزمات الرياضية 😊 وسعيد بمساعدتك! لدينا حذاء ركض احترافي بـ $50 وحزام دعم الظهر بـ $20 (+$5 توصيل). كيف أساعدك يا بطل؟ كريم معك خطوة بخطوة 👟",
-      transfer_to_human: false,
-      intent: "استفسار",
-    };
-  }
-  // تصعيد - يجب أن يكون طلب صريح للتحدث مع إنسان
-  if (/(اريد.*موظف|أريد.*موظف|اريد.*انسان|أريد.*إنسان|اريد.*بشري|أريد.*بشري|اتحدث.*موظف|أتحدث.*موظف|اكلم.*موظف|أكلم.*موظف|التحدث مع.*موظف|التحدث مع.*انسان|التحدث مع.*إنسان|كلم.*موظف|حولني.*موظف|حولني.*انسان|حولني.*إنسان|خدمة عملاء|بشري لو سمحت|موظف بشري)/.test(msg)) {
-    return {
-      reply: "أكيد يا بطل، قمت بإبلاغ الفريق البشري ورح يتواصل معك أحد الشباب بأقرب وقت 💪 شكراً لصبرك، وكريم معك خطوة بخطوة 👟",
-      transfer_to_human: true,
-      intent: "تصعيد",
-    };
-  }
-  // اعتراض على السعر - مميز بسؤال مفتوح
-  if (/(غالي|كثير|سعر مرتفع|ما تقدر تنقص|تخفيض|خصم|ليه كذا سعر)/.test(msg)) {
-    return {
-      reply: "بفهمك والله يا بطل 💪 الحذاء مصمم بخامات احترافية لراحة القدم لمسافات طويلة وبستاهل كل قرش. كخيار اقتصادي ممتاز، حزام دعم الظهر متوفر بـ $20 فقط (+$5 توصيل = $25). قلّي شو أكتر شي بهمك: الراحة بالركض ولا دعم الظهر؟ عشان أوجهك للأفضل 👟 كريم معك خطوة بخطوة",
-      transfer_to_human: false,
-      intent: "اعتراض_على_السعر",
-    };
-  }
-  // شراء
-  if (/(اشتري|أشتري|اطلب|أطلب|اريد.*حذاء|أريد.*حذاء|اريد.*حزام|أريد.*حزام|احجز|أحجز|تم.*الشراء|موافق.*اطلب)/.test(msg)) {
-    const wantsShoes = /حذاء|ركض|شوز/.test(msg);
-    const wantsBelt = /حزام|ظهر|دعم/.test(msg);
-    if (wantsShoes && wantsBelt) {
-      return {
-        reply: "يا هلا يا بطل! 🎁 عرض Bundle المميز: حذاء الركض $50 + حزام الظهر $20 + التوصيل $5 = $75، بس إلك عرض خاص $70 شامل التوصيل (توفير $5)! هل أثبتلك الطلب؟ كريم معك خطوة بخطوة 👟",
-        transfer_to_human: false,
-        intent: "شراء",
-      };
-    }
-    if (wantsBelt) {
-      return {
-        reply: "رائع يا بطل! حزام دعم الظهر سعره $20 + $5 توصيل = $25. هل أثبتلك الطلب؟ كريم معك خطوة بخطوة 👟",
-        transfer_to_human: false,
-        intent: "شراء",
-      };
-    }
-    return {
-      reply: "ممتاز يا بطل! حذاء الركض الاحترافي سعره $50 + $5 توصيل = $55. هل أثبتلك الطلب؟ كريم معك خطوة بخطوة 👟",
-      transfer_to_human: false,
-      intent: "شراء",
-    };
-  }
-  // استفسار عام
-  if (/(كم.*سعر|بكم|سعر.*حذاء|سعر.*حزام|توصيل|منتجات|عندكم ايش|وش عندكم|ماذا لديكم)/.test(msg)) {
-    return {
-      reply: "يا هلا والله يا بطل! 😊 لدينا حذاء ركض احترافي بـ $50، وحزام دعم الظهر بـ $20، ورسوم التوصيل $5. وعندنا عرض Bundle المميز: الاثنين بـ $70 شامل التوصيل (توفير $5)! أي منتج بتحب؟ كريم معك خطوة بخطوة 👟",
-      transfer_to_human: false,
-      intent: "استفسار",
-    };
-  }
-  // ترحيب أو رسالة عامة
-  return {
-    reply: "يا هلا والله يا بطل! 😊 أنا كريم، صاحبك الرياضي من متجر المستلزمات. لدينا حذاء ركض احترافي ($50) وحزام دعم الظهر ($20) مع توصيل $5، وعرض Bundle المميز: الاثنين بـ $70 شامل التوصيل 🎁 كيف أساعدك اليوم؟ كريم معك خطوة بخطوة 👟",
-    transfer_to_human: false,
-    intent: "استفسار",
-  };
-}
-
-// ──────────────────────────────────────────────
-// 5. ذاكرة المحادثة (لكل رقم واتساب)
-// ──────────────────────────────────────────────
-const conversations = new Map(); // phone -> [{role, text, timestamp}]
-const MAX_HISTORY = 10; // آخر 10 رسائل (5 تبادلات)
-const MEMORY_TTL_MS = 1000 * 60 * 60 * 6; // 6 ساعات
-
-// ── منع التكرار: Meta يعيد إرسال نفس الرسالة إذا تأخر الـ 200 ──
-const seenMessageIds = new Map(); // wamid -> timestamp
-const SEEN_TTL_MS = 1000 * 60 * 60 * 24; // 24 ساعة
-function isDuplicateMessage(msgId) {
-  if (!msgId) return false;
-  // تنظيف دوري
-  if (seenMessageIds.size > 2000) {
-    const now = Date.now();
-    for (const [k, ts] of seenMessageIds) {
-      if (now - ts > SEEN_TTL_MS) seenMessageIds.delete(k);
-    }
-  }
-  if (seenMessageIds.has(msgId)) return true;
-  seenMessageIds.set(msgId, Date.now());
-  return false;
-}
-
-async function tenantOf(input) {
-  // input قد يكون id نصي أو كائن tenant كامل
-  if (!input) return resolveTenant({});
-  if (typeof input === "string") return (await getTenantFull(input)) || (await resolveTenant({}));
-  return input;
-}
-
-function keyOf(phone, tenant) {
-  const tid = tenant?.id || "kareem-sport";
-  // عزل تام: tenant + phone (نفس الرقم عند بوتين = ذاكرتين منفصلتين)
-  return memoryKey(tid, phone);
-}
-
-async function getHistory(phone, tenantInput) {
-  const tenant = await tenantOf(tenantInput);
-  const key = keyOf(phone, tenant);
-  const entry = conversations.get(key);
-  if (entry) {
-    // تنظيف المنتهية
-    if (Date.now() - entry.updatedAt > MEMORY_TTL_MS) {
-      conversations.delete(key);
-    } else {
-      return entry.messages;
-    }
-  }
-  // عند غياب الكاش (مثلاً بعد restart) حمّل من Postgres
-  try {
-    const { tenantDb } = await import("./src/security/tenantGuard.mjs");
-    const rows = await tenantDb(tenant?.id).message.findMany({
-      where: { phone },
-      orderBy: { createdAt: "desc" },
-      take: MAX_HISTORY,
-    });
-    const messages = rows.reverse().map((row) => ({
-      role: row.role, text: row.text, ts: new Date(row.createdAt).getTime(),
-    }));
-    conversations.set(key, { messages, updatedAt: Date.now() });
-    return messages;
-  } catch (e) {
-    console.error(`  ⚠️ فشل تحميل الذاكرة: ${e.message}`);
-  }
-  return [];
-}
-
-async function pushHistory(phone, role, text, tenantInput) {
-  const tenant = await tenantOf(tenantInput);
-  const key = keyOf(phone, tenant);
-  let entry = conversations.get(key);
-  if (!entry) {
-    entry = { messages: [], updatedAt: Date.now() };
-    conversations.set(key, entry);
-  }
-  entry.messages.push({ role, text, ts: Date.now() });
-  if (entry.messages.length > MAX_HISTORY) entry.messages.shift();
-  entry.updatedAt = Date.now();
-  // حفظ دائم في Postgres (لا يضيع عند restart)
-  try {
-    const { tenantDb } = await import("./src/security/tenantGuard.mjs");
-    await tenantDb(tenant?.id).message.create({
-      data: { phone, role, text },
-    });
-  } catch (e) {
-    console.error(`  ⚠️ فشل حفظ الرسالة: ${e.message}`);
-  }
-}
-
-export function clearMemory(phone, tenantId) {
-  if (phone && tenantId) conversations.delete(memoryKey(tenantId, phone));
-  else if (phone) {
-    // امسح كل مفاتيح هذا الرقم عبر كل البوتات
-    for (const k of [...conversations.keys()]) {
-      if (k === phone || k.endsWith(`::${phone}`)) conversations.delete(k);
-    }
-  } else conversations.clear();
-}
-
-export function getMemoryStats() {
-  return { conversations: conversations.size, maxHistory: MAX_HISTORY };
-}
+export {
+  getHistory,
+  pushHistory,
+  clearMemory,
+  getMemoryStats,
+  isDuplicateMessage,
+} from "./src/memory/conversations.mjs";
+import {
+  getHistory,
+  pushHistory,
+  isDuplicateMessage,
+} from "./src/memory/conversations.mjs";
 
 // ── Inbox: عرض المحادثات + Takeover (إيقاف البوت مؤقتاً لتدخل بشري) ──
 // Takeover دائم في DB (لا يضيع عند restart)
@@ -365,218 +125,30 @@ export async function getConversation(tenantId, phone) {
 }
 
 // ──────────────────────────────────────────────
-// 6. الدالة الأساسية: getKareemReply (مع ذاكرة)
+// 6. الـ AI — نُقل إلى src/ai/kareem.mjs (إعادة تصدير للتوافق)
 // ──────────────────────────────────────────────
-export async function getKareemReply(userMessage, phone = "default", tenantInput = null) {
-  const tenant = await tenantOf(tenantInput);
-  // كريم الحالي يبقى كما هو؛ أي tenant جديد يستخدم prompt مبني من إعداداته
-  const prompt = tenant?.id === "kareem-sport" ? SYSTEM_PROMPT : buildSystemPrompt(tenant);
-  const botLabel = tenant?.botName || "كريم";
-
-  // وضع DEMO بدون استهلاك API - مع ذاكرة بسيطة
-  if (isDemoMode) {
-    await new Promise((r) => setTimeout(r, 300));
-    const result = mockReply(userMessage);
-    // حفظ في الذاكرة حتى في وضع DEMO (معزولة لكل بوت)
-    await pushHistory(phone, "user", userMessage, tenant);
-    await pushHistory(phone, "assistant", result.reply, tenant);
-    return result;
-  }
-
-  try {
-    let rawText = "";
-    const history = await getHistory(phone, tenant);
-    // تحويل التاريخ لنص للسياق
-    const historyContext = history.map(m => `${m.role === "user" ? "العميل" : botLabel}: ${m.text}`).join("\n");
-
-    if (AI_PROVIDER === "google") {
-      // نمرر التاريخ كجزء من السياق + الرسالة الحالية
-      const fullContents = [];
-      // إضافة التاريخ كمحادثة سابقة
-      for (const h of history) {
-        fullContents.push({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.text }] });
-      }
-      fullContents.push({ role: "user", parts: [{ text: userMessage }] });
-
-      const response = await googleClient.models.generateContent({
-        model: AI_MODEL,
-        contents: fullContents,
-        config: {
-          systemInstruction: prompt + (historyContext ? `\n\n# سجل المحادثة السابقة مع هذا العميل (${phone}):\n${historyContext}\n(استخدمه لتتذكر ماذا طلب العميل ولا تكرر الأسئلة)` : ""),
-          responseMimeType: "application/json",
-          temperature: 0.7,
-        },
-      });
-      rawText = response.text;
-    } else {
-      const messages = [{ role: "system", content: prompt }];
-      if (historyContext) {
-        messages.push({ role: "system", content: `سجل المحادثة السابقة مع العميل ${phone}:\n${historyContext}` });
-      }
-      for (const h of history) {
-        messages.push({ role: h.role === "user" ? "user" : "assistant", content: h.text });
-      }
-      messages.push({ role: "user", content: userMessage });
-
-      const completion = await openaiClient.chat.completions.create({
-        model: AI_MODEL,
-        messages,
-        response_format: { type: "json_object" },
-        temperature: 0.7,
-      });
-      rawText = completion.choices[0].message.content;
-    }
-
-    // تنظيف الرد من markdown إن وجد
-    const cleaned = rawText.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-
-    // التحقق من الهيكل
-    if (typeof parsed.reply !== "string" || typeof parsed.transfer_to_human !== "boolean" || typeof parsed.intent !== "string") {
-      throw new Error("هيكل JSON غير متطابق");
-    }
-
-    // التحقق من intent المسموح (أضفنا حجز_موعد للعيادات)
-    const allowedIntents = ["استفسار", "شراء", "اعتراض_على_السعر", "تصعيد", "حجز_موعد"];
-    if (!allowedIntents.includes(parsed.intent)) {
-      console.warn(`  ⚠️  تحذير: intent غير متوقع "${parsed.intent}" - تم التصحيح إلى "استفسار"`);
-      parsed.intent = "استفسار";
-    }
-    // حقول اختيارية من الـ AI: buttons / image / action
-    if (parsed.buttons && !Array.isArray(parsed.buttons)) delete parsed.buttons;
-    if (parsed.buttons) parsed.buttons = parsed.buttons.slice(0, 3);
-    if (parsed.image && typeof parsed.image !== "string") delete parsed.image;
-
-    // تحذير إذا اقترح منتجات خارج القائمة
-    const forbiddenPattern = /(ساعة|قميص|تيشيرت|نظارة|كرة|مضرب|دراجة)/i;
-    if (forbiddenPattern.test(parsed.reply)) {
-      console.warn(`  ⚠️  تحذير: الرد يحتوي على منتج غير مصرح به!`);
-    }
-
-    // حفظ في الذاكرة (معزولة لكل بوت)
-    await pushHistory(phone, "user", userMessage, tenant);
-    await pushHistory(phone, "assistant", parsed.reply, tenant);
-    return parsed;
-  } catch (err) {
-    console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
-    const fallback = mockReply(userMessage);
-    await pushHistory(phone, "user", userMessage, tenant);
-    await pushHistory(phone, "assistant", fallback.reply, tenant);
-    return fallback;
-  }
-}
-
-// الاسم المطلوب في التكليف: processCustomerMessage
-export const processCustomerMessage = getKareemReply;
+export {
+  getKareemReply,
+  processCustomerMessage,
+  isDemoMode,
+} from "./src/ai/kareem.mjs";
+import { getKareemReply, processCustomerMessage, isDemoMode } from "./src/ai/kareem.mjs";
 
 // ──────────────────────────────────────────────
-// 6. دالة إرسال الرد عبر WhatsApp Cloud API
+// 6. الإرسال — نُقل إلى src/whatsapp/sender.mjs (إعادة تصدير للتوافق)
 // ──────────────────────────────────────────────
-export async function sendWhatsAppMessage(to, text, tenantInput = null) {
-  const tenant = await tenantOf(tenantInput);
-  const token = tenant?.whatsapp_token || WHATSAPP_TOKEN;
-  const phoneId = tenant?.phone_number_id || WHATSAPP_PHONE_ID;
-
-  if (!token || token === "DEMO_WHATSAPP_TOKEN" || !phoneId || phoneId === "DEMO_PHONE_ID") {
-    console.log(`  📤 [محاكاة إرسال] إلى ${to}: "${text}"`);
-    console.log(`  💡 ضع WHATSAPP_TOKEN و WHATSAPP_PHONE_ID الحقيقيين في .env للإرسال الفعلي`);
-    return { simulated: true, to, text };
-  }
-
-  const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`;
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body: text, preview_url: false },
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error(`  ❌ فشل إرسال واتساب [${response.status}]:`, JSON.stringify(data));
-      throw new Error(data.error?.message || `HTTP ${response.status}`);
-    }
-
-    console.log(`  ✅ تم إرسال الرد إلى ${to} | ID: ${data.messages?.[0]?.id || "N/A"}`);
-    return data;
-  } catch (err) {
-    console.error(`  ❌ خطأ في sendWhatsAppMessage: ${err.message}`);
-    throw err;
-  }
-}
-
-// إرسال generic (نص / أزرار / صورة) - نفس التوكن لكل بوت
-async function sendPayload(to, payload, tenantInput = null) {
-  const tenant = await tenantOf(tenantInput);
-  const token = tenant?.whatsapp_token || WHATSAPP_TOKEN;
-  const phoneId = tenant?.phone_number_id || WHATSAPP_PHONE_ID;
-
-  if (!token || token === "DEMO_WHATSAPP_TOKEN" || !phoneId || phoneId === "DEMO_PHONE_ID") {
-    console.log(`  📤 [محاكاة إرسال ${payload.type}] إلى ${to}: ${JSON.stringify(payload).slice(0, 200)}`);
-    return { simulated: true, to, payload };
-  }
-  const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, ...payload }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
-  console.log(`  ✅ تم الإرسال (${payload.type}) إلى ${to} | ID: ${data.messages?.[0]?.id || "N/A"}`);
-  return data;
-}
-
-export async function sendButtons(to, bodyText, buttons, tenantInput = null) {
-  const btns = (buttons || []).slice(0, 3).map((b, i) => ({
-    type: "reply",
-    reply: { id: b.id || `btn_${i}`, title: (b.title || `خيار ${i + 1}`).slice(0, 20) },
-  }));
-  if (!btns.length) return sendWhatsAppMessage(to, bodyText, tenantInput);
-  return sendPayload(to, {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text: bodyText.slice(0, 1024) },
-      action: { buttons: btns },
-    },
-  }, tenantInput);
-}
-
-export async function sendImage(to, link, caption = "", tenantInput = null) {
-  return sendPayload(to, {
-    type: "image",
-    image: { link, caption: caption.slice(0, 1024) },
-  }, tenantInput);
-}
-
-// أزرار افتراضية لكل tenant من منتجاته
-export async function defaultButtonsFor(tenant) {
-  const t = await tenantOf(tenant);
-  if (t?.id === "kareem-sport") {
-    return [
-      { id: "buy_shoes", title: "👟 الحذاء $50" },
-      { id: "buy_belt", title: "💪 الحزام $20" },
-      { id: "bundle", title: "🎁 العرض $70" },
-    ];
-  }
-  const btns = (t.products || []).slice(0, 2).map((p) => ({
-    id: p.buttonId || p.name,
-    title: `${p.name} $${p.price}`.slice(0, 20),
-  }));
-  if (t?.features?.booking) btns.push({ id: "booking", title: "📅 احجز موعد" });
-  return btns.slice(0, 3);
-}
+export {
+  sendWhatsAppMessage,
+  sendButtons,
+  sendImage,
+  defaultButtonsFor,
+} from "./src/whatsapp/sender.mjs";
+import {
+  sendWhatsAppMessage,
+  sendButtons,
+  sendImage,
+  defaultButtonsFor,
+} from "./src/whatsapp/sender.mjs";
 
 // تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
 function detectTotal(tenant, userText, replyText) {
