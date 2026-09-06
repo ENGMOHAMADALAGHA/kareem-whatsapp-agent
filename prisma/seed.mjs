@@ -1,0 +1,52 @@
+// بذر البوتات الافتراضية: node --env-file=.env prisma/seed.mjs
+import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+});
+
+const tenants = [
+  {
+    id: "kareem-sport",
+    name: "كريم - متجر مستلزمات رياضية",
+    botName: "كريم",
+    businessType: "sport-store",
+    products: [
+      { name: "حذاء ركض احترافي", price: 50, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800", buttonId: "buy_shoes" },
+      { name: "حزام دعم الظهر", price: 20, image: "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=800", buttonId: "buy_belt" },
+    ],
+    deliveryFee: 5,
+    bundleOffer: { enabled: true, price: 70, description: "الحذاء + الحزام بـ $70 شامل التوصيل (توفير $5)" },
+    tone: "أردنية عامية خفيفة + ودود + يا هلا والله يا بطل + كريم معك خطوة بخطوة 👟",
+    languages: ["ar", "en"],
+    features: { buttons: true, images: true, booking: false },
+  },
+  {
+    id: "agha-dental",
+    name: "عيادة أسنان - د. أحمد",
+    botName: "ليان",
+    businessType: "dental",
+    products: [
+      { name: "تنظيف أسنان", price: 30, buttonId: "svc_clean" },
+      { name: "حشوة", price: 80, buttonId: "svc_filling" },
+      { name: "تقويم (استشارة)", price: 0, buttonId: "svc_braces" },
+    ],
+    deliveryFee: 0,
+    bundleOffer: { enabled: false },
+    tone: "لطيفة ومهنية + عربية فصحى سلسة + 😊",
+    languages: ["ar", "en"],
+    features: {
+      buttons: true, images: false, booking: true,
+      workingHours: "السبت - الخميس: 10ص - 8م",
+      bookingSlots: ["10:00", "12:00", "14:00", "16:00", "18:00"],
+    },
+  },
+];
+
+for (const t of tenants) {
+  await prisma.tenant.upsert({ where: { id: t.id }, update: {}, create: t });
+  console.log("seeded", t.id);
+}
+console.log("tenants:", await prisma.tenant.count());
+await prisma.$disconnect();

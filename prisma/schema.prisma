@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id           String   @id
+  name         String
+  botName      String
+  enabled      Boolean  @default(true)
+  phoneNumberId String? @map("phone_number_id")
+  verifyToken  String?  @map("verify_token")
+  businessType String   @default("general") @map("business_type")
+  products     Json     @default("[]")
+  deliveryFee  Float    @default(5) @map("delivery_fee")
+  bundleOffer  Json?    @map("bundle_offer")
+  tone         String   @default("ودود ومهني")
+  languages    Json     @default("[\"ar\",\"en\"]")
+  features     Json     @default("{}")
+
+  messages     Message[]
+  orders       Order[]
+  appointments Appointment[]
+  ratings      Rating[]
+  broadcasts   Broadcast[]
+  events       Event[]
+
+  @@map("tenants")
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String
+  role      String
+  text      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, phone, createdAt])
+  @@map("messages")
+}
+
+model Order {
+  id             String    @id
+  tenantId       String    @map("tenant_id")
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone          String
+  name           String?
+  items          Json
+  total          Float
+  currency       String    @default("USD")
+  status         String    @default("pending")
+  paymentUrl     String?   @map("payment_url")
+  cartRemindedAt DateTime? @map("cart_reminded_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  paidAt         DateTime? @map("paid_at") @db.Timestamptz(6)
+
+  @@index([tenantId, createdAt])
+  @@map("orders")
+}
+
+model Appointment {
+  id         String    @id
+  tenantId   String    @map("tenant_id")
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone      String
+  name       String?
+  service    String?
+  day        String?
+  slot       String?
+  status     String    @default("confirmed")
+  remindedAt DateTime? @map("reminded_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, createdAt])
+  @@map("appointments")
+}
+
+model Rating {
+  id        String   @id
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String
+  score     Int
+  refId     String?  @map("ref_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId])
+  @@map("ratings")
+}
+
+model Broadcast {
+  id        String   @id
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  text      String
+  phones    Json
+  results   Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("broadcasts")
+}
+
+model Event {
+  id        String   @id
+  type      String
+  tenantId  String?  @map("tenant_id")
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String?
+  data      Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, type, createdAt])
+  @@map("events")
+}

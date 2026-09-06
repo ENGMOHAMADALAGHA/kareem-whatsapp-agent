@@ -1,23 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { db, isDbEnabled } from "./db.mjs";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FILE = path.join(__dirname, "crm.json");
-
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(FILE, "utf-8")).events || [];
-  } catch {
-    return [];
-  }
-}
-function save(all) {
-  // نحتفظ بآخر 2000 حدث فقط
-  const trimmed = all.slice(-2000);
-  fs.writeFileSync(FILE, JSON.stringify({ events: trimmed }, null, 2) + "\n");
-}
+import { db } from "./db.mjs";
 
 // تسجيل حدث CRM + إرسال اختياري لـ webhook خارجي (Sheets/Make/n8n)
 export async function logEvent(type, data = {}) {
@@ -28,15 +9,17 @@ export async function logEvent(type, data = {}) {
     at: new Date().toISOString(),
   };
 
-  if (isDbEnabled()) {
-    await db().query(
-      `INSERT INTO events (id, type, tenant_id, phone, data) VALUES ($1,$2,$3,$4,$5)`,
-      [event.id, type, data.tenantId || null, data.phone || null, JSON.stringify(data)]
-    );
-  } else {
-    const all = load();
-    all.push(event);
-    save(all);
+  try {
+    await db().event.create({
+      data: {
+        id: event.id, type,
+        tenantId: data.tenantId || null,
+        phone: data.phone || null,
+        data,
+      },
+    });
+  } catch (e) {
+    console.error(`  ⚠️ فشل حفظ حدث CRM: ${e.message}`);
   }
 
   // webhook خارجي اختياري (Google Sheets عبر Make/n8n)
@@ -56,31 +39,20 @@ export async function logEvent(type, data = {}) {
 }
 
 export async function listEvents({ tenantId, type, limit = 100 } = {}) {
-  if (isDbEnabled()) {
-    let q = `SELECT * FROM events WHERE 1=1`;
-    const params = [];
-    if (tenantId) {
-      params.push(tenantId);
-      q += ` AND tenant_id=$${params.length}`;
-    }
-    if (type) {
-      params.push(type);
-      q += ` AND type=$${params.length}`;
-    }
-    params.push(Math.min(limit, 2000));
-    q += ` ORDER BY created_at DESC LIMIT $${params.length}`;
-    const r = await db().query(q, params);
-    return r.rows.map((row) => ({
-      id: row.id, type: row.type,
-      tenantId: row.tenant_id, phone: row.phone,
-      ...(typeof row.data === "string" ? JSON.parse(row.data) : row.data),
-      at: row.created_at,
-    }));
-  }
-  let all = load();
-  if (tenantId) all = all.filter((e) => !e.tenantId || e.tenantId === tenantId);
-  if (type) all = all.filter((e) => e.type === type);
-  return all.slice(-limit).reverse();
+  const rows = await db().event.findMany({
+    where: {
+      ...(tenantId ? { tenantId } : {}),
+      ...(type ? { type } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(limit, 2000),
+  });
+  return rows.map((row) => ({
+    id: row.id, type: row.type,
+    tenantId: row.tenantId, phone: row.phone,
+    ...(row.data || {}),
+    at: row.createdAt,
+  }));
 }
 
 export function toCSV(events) {

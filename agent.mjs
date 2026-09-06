@@ -31,7 +31,7 @@ import {
   markCartReminded,
 } from "./orders.mjs";
 import { logEvent, listEvents, toCSV } from "./crm.mjs";
-import { isDbEnabled } from "./db.mjs";
+import { db, isDbEnabled } from "./db.mjs";
 import {
   saveBroadcast,
   listBroadcasts,
@@ -228,10 +228,10 @@ function isDuplicateMessage(msgId) {
   return false;
 }
 
-function tenantOf(input) {
+async function tenantOf(input) {
   // input قد يكون id نصي أو كائن tenant كامل
   if (!input) return resolveTenant({});
-  if (typeof input === "string") return getTenantFull(input) || resolveTenant({});
+  if (typeof input === "string") return (await getTenantFull(input)) || (await resolveTenant({}));
   return input;
 }
 
@@ -242,7 +242,7 @@ function keyOf(phone, tenant) {
 }
 
 async function getHistory(phone, tenantInput) {
-  const tenant = tenantOf(tenantInput);
+  const tenant = await tenantOf(tenantInput);
   const key = keyOf(phone, tenant);
   const entry = conversations.get(key);
   if (entry) {
@@ -254,27 +254,25 @@ async function getHistory(phone, tenantInput) {
     }
   }
   // عند غياب الكاش (مثلاً بعد restart) حمّل من Postgres
-  if (isDbEnabled()) {
-    try {
-      const { db } = await import("./db.mjs");
-      const r = await db().query(
-        `SELECT role, text, created_at FROM messages WHERE tenant_id=$1 AND phone=$2 ORDER BY created_at DESC LIMIT $3`,
-        [tenant?.id, phone, MAX_HISTORY]
-      );
-      const messages = r.rows.reverse().map((row) => ({
-        role: row.role, text: row.text, ts: new Date(row.created_at).getTime(),
-      }));
-      conversations.set(key, { messages, updatedAt: Date.now() });
-      return messages;
-    } catch (e) {
-      console.error(`  ⚠️ فشل تحميل الذاكرة: ${e.message}`);
-    }
+  try {
+    const rows = await db().message.findMany({
+      where: { tenantId: tenant?.id, phone },
+      orderBy: { createdAt: "desc" },
+      take: MAX_HISTORY,
+    });
+    const messages = rows.reverse().map((row) => ({
+      role: row.role, text: row.text, ts: new Date(row.createdAt).getTime(),
+    }));
+    conversations.set(key, { messages, updatedAt: Date.now() });
+    return messages;
+  } catch (e) {
+    console.error(`  ⚠️ فشل تحميل الذاكرة: ${e.message}`);
   }
   return [];
 }
 
 async function pushHistory(phone, role, text, tenantInput) {
-  const tenant = tenantOf(tenantInput);
+  const tenant = await tenantOf(tenantInput);
   const key = keyOf(phone, tenant);
   let entry = conversations.get(key);
   if (!entry) {
@@ -285,16 +283,12 @@ async function pushHistory(phone, role, text, tenantInput) {
   if (entry.messages.length > MAX_HISTORY) entry.messages.shift();
   entry.updatedAt = Date.now();
   // حفظ دائم في Postgres (لا يضيع عند restart)
-  if (isDbEnabled()) {
-    try {
-      const { db } = await import("./db.mjs");
-      await db().query(
-        `INSERT INTO messages (tenant_id, phone, role, text) VALUES ($1,$2,$3,$4)`,
-        [tenant?.id, phone, role, text]
-      );
-    } catch (e) {
-      console.error(`  ⚠️ فشل حفظ الرسالة: ${e.message}`);
-    }
+  try {
+    await db().message.create({
+      data: { tenantId: tenant?.id, phone, role, text },
+    });
+  } catch (e) {
+    console.error(`  ⚠️ فشل حفظ الرسالة: ${e.message}`);
   }
 }
 
@@ -375,7 +369,7 @@ export async function getConversation(tenantId, phone) {
 // 6. الدالة الأساسية: getKareemReply (مع ذاكرة)
 // ──────────────────────────────────────────────
 export async function getKareemReply(userMessage, phone = "default", tenantInput = null) {
-  const tenant = tenantOf(tenantInput);
+  const tenant = await tenantOf(tenantInput);
   // كريم الحالي يبقى كما هو؛ أي tenant جديد يستخدم prompt مبني من إعداداته
   const prompt = tenant?.id === "kareem-sport" ? SYSTEM_PROMPT : buildSystemPrompt(tenant);
   const botLabel = tenant?.botName || "كريم";
@@ -480,7 +474,7 @@ export const processCustomerMessage = getKareemReply;
 // 6. دالة إرسال الرد عبر WhatsApp Cloud API
 // ──────────────────────────────────────────────
 export async function sendWhatsAppMessage(to, text, tenantInput = null) {
-  const tenant = tenantOf(tenantInput);
+  const tenant = await tenantOf(tenantInput);
   const token = tenant?.whatsapp_token || WHATSAPP_TOKEN;
   const phoneId = tenant?.phone_number_id || WHATSAPP_PHONE_ID;
 
@@ -524,7 +518,7 @@ export async function sendWhatsAppMessage(to, text, tenantInput = null) {
 
 // إرسال generic (نص / أزرار / صورة) - نفس التوكن لكل بوت
 async function sendPayload(to, payload, tenantInput = null) {
-  const tenant = tenantOf(tenantInput);
+  const tenant = await tenantOf(tenantInput);
   const token = tenant?.whatsapp_token || WHATSAPP_TOKEN;
   const phoneId = tenant?.phone_number_id || WHATSAPP_PHONE_ID;
 
@@ -568,8 +562,8 @@ export async function sendImage(to, link, caption = "", tenantInput = null) {
 }
 
 // أزرار افتراضية لكل tenant من منتجاته
-export function defaultButtonsFor(tenant) {
-  const t = tenantOf(tenant);
+export async function defaultButtonsFor(tenant) {
+  const t = await tenantOf(tenant);
   if (t?.id === "kareem-sport") {
     return [
       { id: "buy_shoes", title: "👟 الحذاء $50" },
@@ -632,19 +626,19 @@ export function createApp() {
   app.use("/admin", adminAuth);
 
   // صفحة ترحيبية
-  app.get("/", (req, res) => {
+  app.get("/", async (req, res) => {
     res.json({
       name: "كريم - AI Sales Agent (Multi-Tenant)",
       status: "running",
       webhook: "/webhook",
       admin: "/admin/tenants",
-      tenants: listTenants().length,
+      tenants: (await listTenants()).length,
       mode: isDemoMode ? "DEMO" : AI_PROVIDER,
     });
   });
 
   // ── GET /webhook : التحقق من ملكية الـ Webhook (يدعم أكثر من بوت) ──
-  app.get("/webhook", (req, res) => {
+  app.get("/webhook", async (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
@@ -652,7 +646,7 @@ export function createApp() {
     console.log(`  🔍 GET /webhook - mode=${mode} token=${token} challenge=${challenge}`);
 
     // أولاً: جرّب مطابقة tenant حسب verify_token
-    const tenant = token ? resolveTenant({ verifyToken: token }) : null;
+    const tenant = token ? await resolveTenant({ verifyToken: token }) : null;
     const expected = tenant?.verify_token || WEBHOOK_VERIFY_TOKEN;
 
     if (mode === "subscribe" && token === expected) {
@@ -664,14 +658,15 @@ export function createApp() {
     return res.sendStatus(403);
   });
 
-  // ── لوحة تحكم البوتات (مرحلة 1: API بدون auth - تُحمى لاحقاً) ──
-  app.get("/admin/tenants", (req, res) => {
-    res.json({ count: listTenants().length, tenants: listTenants(), memory: getMemoryStats() });
+  // ── لوحة تحكم البوتات (محمية بـ Basic Auth) ──
+  app.get("/admin/tenants", async (req, res) => {
+    const list = await listTenants();
+    res.json({ count: list.length, tenants: list, memory: getMemoryStats() });
   });
 
-  app.post("/admin/tenants", (req, res) => {
+  app.post("/admin/tenants", async (req, res) => {
     try {
-      const created = addTenant(req.body || {});
+      const created = await addTenant(req.body || {});
       console.log(`  ➕ tenant جديد: ${created.id} (${created.name})`);
       res.status(201).json({ ok: true, tenant: created });
     } catch (e) {
@@ -679,8 +674,8 @@ export function createApp() {
     }
   });
 
-  app.get("/admin/tenants/:id", (req, res) => {
-    const t = getTenantFull(req.params.id);
+  app.get("/admin/tenants/:id", async (req, res) => {
+    const t = await getTenantFull(req.params.id);
     if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     // إخفاء التوكن
     const { whatsapp_token, ...safe } = t;
@@ -705,7 +700,7 @@ export function createApp() {
       await markOrderPaid(order.id);
       logEvent("order_paid", { tenantId: order.tenantId, phone: order.phone, orderId: order.id, total: order.total }).catch(() => {});
       // طلب تقييم تلقائي بعد الدفع
-      const tenant = getTenantFull(order.tenantId);
+      const tenant = await getTenantFull(order.tenantId);
       if (tenant) {
         const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
         requestCsat(order.tenantId, order.phone, order.id);
@@ -728,7 +723,7 @@ export function createApp() {
       return res.status(400).json({ ok: false, error: "tenantId و text و phones[] مطلوبة" });
     }
     if (phones.length > 50) return res.status(400).json({ ok: false, error: "الحد الأقصى 50 رقم لكل بث" });
-    const tenant = getTenantFull(tenantId);
+    const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     const results = [];
     for (const phone of phones) {
@@ -754,7 +749,7 @@ export function createApp() {
   app.post("/admin/csat-request", async (req, res) => {
     const { tenantId, phone } = req.body || {};
     if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
-    const tenant = getTenantFull(tenantId);
+    const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     const msg = `شكراً لتعاملك معنا يا غالي! 🙏 قيّم تجربتك من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
     requestCsat(tenantId, phone, null);
@@ -790,7 +785,7 @@ export function createApp() {
     const due = await dueCartReminders({ afterMinutes });
     const sent = [];
     for (const o of due) {
-      const tenant = getTenantFull(o.tenantId);
+      const tenant = await getTenantFull(o.tenantId);
       if (!tenant) continue;
       const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
       try {
@@ -833,7 +828,7 @@ export function createApp() {
   app.post("/admin/send", async (req, res) => {
     const { tenantId, phone, text } = req.body || {};
     if (!tenantId || !phone || !text) return res.status(400).json({ ok: false, error: "tenantId و phone و text مطلوبة" });
-    const tenant = getTenantFull(tenantId);
+    const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     try {
       const r = await sendWhatsAppMessage(phone, text, tenant);
@@ -869,7 +864,7 @@ load();
     const due = await dueReminders({ afterMinutes });
     const sent = [];
     for (const b of due) {
-      const tenant = getTenantFull(b.tenantId);
+      const tenant = await getTenantFull(b.tenantId);
       if (!tenant) continue;
       const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
       try {
@@ -924,7 +919,7 @@ load();
 
           // حل الـ tenant من رقم البوت المستقبل (عزل تام)
           const phoneNumberId = value.metadata?.phone_number_id || value.phone_number_id || null;
-          const tenant = resolveTenant({ phoneNumberId });
+          const tenant = await resolveTenant({ phoneNumberId });
           if (tenant && tenant.enabled === false) {
             console.log(`  ⏸️ tenant موقوف: ${tenant.id} - تم تجاهل الرسالة`);
             continue;
@@ -1120,7 +1115,7 @@ load();
               if (result.image && tenant?.features?.images) {
                 await sendImage(from, result.image, result.reply.slice(0, 200), tenant).catch(() => {});
                 // مع الصورة نرسل الأزرار لو وجدت
-                const btns = result.buttons?.length ? result.buttons : defaultButtonsFor(tenant);
+                const btns = result.buttons?.length ? result.buttons : await defaultButtonsFor(tenant);
                 if (tenant?.features?.buttons && btns?.length) {
                   await sendButtons(from, "شو بتحب تعمل هلا؟", btns, tenant).catch(() => {});
                 }
@@ -1131,7 +1126,7 @@ load();
                 const histLen = (await getHistory(from, tenant)).length;
                 await sendWhatsAppMessage(from, result.reply, tenant);
                 if (tenant?.id === "kareem-sport" && histLen <= 2 && /حذاء|حزام|Bundle|لدينا/i.test(result.reply)) {
-                  await sendButtons(from, "اختار بسرعة 👇", defaultButtonsFor(tenant), tenant).catch(() => {});
+                  await sendButtons(from, "اختار بسرعة 👇", await defaultButtonsFor(tenant), tenant).catch(() => {});
                 }
               }
             } catch (sendErr) {
@@ -1172,7 +1167,7 @@ export function startServer(port = PORT) {
         // 1) تذكير مواعيد
         const due = dueReminders({ afterMinutes: Number(process.env.REMIND_AFTER_MIN || 60) });
         for (const b of due.slice(0, 20)) {
-          const tenant = getTenantFull(b.tenantId);
+          const tenant = await getTenantFull(b.tenantId);
           if (!tenant) continue;
           const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}.`;
           try {
@@ -1187,7 +1182,7 @@ export function startServer(port = PORT) {
         // 2) سلة مهجورة (طلبات pending بدون دفع)
         const carts = dueCartReminders({ afterMinutes: Number(process.env.CART_AFTER_MIN || 60) });
         for (const o of carts.slice(0, 20)) {
-          const tenant = getTenantFull(o.tenantId);
+          const tenant = await getTenantFull(o.tenantId);
           if (!tenant) continue;
           const msg = `يا هلا يا بطل! 👋 شفنا طلبك ${o.id} ($${o.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${o.paymentUrl || "ابعت تم للتأكيد"}`;
           try {

@@ -1,22 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { db, isDbEnabled } from "./db.mjs";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BC_FILE = path.join(__dirname, "broadcasts.json");
-const CSAT_FILE = path.join(__dirname, "csat.json");
-
-function loadJson(file, key) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf-8"))[key] || [];
-  } catch {
-    return [];
-  }
-}
-function saveJson(file, key, arr) {
-  fs.writeFileSync(file, JSON.stringify({ [key]: arr }, null, 2) + "\n");
-}
+import { db } from "./db.mjs";
 
 // ── Broadcast ──
 export async function saveBroadcast({ tenantId, text, phones, results }) {
@@ -26,32 +8,24 @@ export async function saveBroadcast({ tenantId, text, phones, results }) {
     phones, results,
     createdAt: new Date().toISOString(),
   };
-  if (isDbEnabled()) {
-    await db().query(
-      `INSERT INTO broadcasts (id, tenant_id, text, phones, results) VALUES ($1,$2,$3,$4,$5)`,
-      [rec.id, tenantId, rec.text, JSON.stringify(phones), JSON.stringify(results)]
-    );
-    return rec;
-  }
-  const all = loadJson(BC_FILE, "broadcasts");
-  all.push(rec);
-  saveJson(BC_FILE, "broadcasts", all);
+  await db().broadcast.create({
+    data: {
+      id: rec.id, tenantId, text: rec.text, phones, results,
+    },
+  });
   return rec;
 }
 
 export async function listBroadcasts(tenantId) {
-  if (isDbEnabled()) {
-    const r = tenantId
-      ? await db().query(`SELECT * FROM broadcasts WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 200`, [tenantId])
-      : await db().query(`SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT 200`);
-    return r.rows.map((row) => ({
-      id: row.id, tenantId: row.tenant_id, text: row.text,
-      phones: typeof row.phones === "string" ? JSON.parse(row.phones) : row.phones,
-      results: typeof row.results === "string" ? JSON.parse(row.results) : row.results,
-      createdAt: row.created_at,
-    }));
-  }
-  return loadJson(BC_FILE, "broadcasts").filter((b) => !tenantId || b.tenantId === tenantId);
+  const rows = await db().broadcast.findMany({
+    where: tenantId ? { tenantId } : undefined,
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+  return rows.map((row) => ({
+    id: row.id, tenantId: row.tenantId, text: row.text,
+    phones: row.phones, results: row.results, createdAt: row.createdAt,
+  }));
 }
 
 // ── CSAT ──
@@ -76,33 +50,20 @@ export async function saveRating({ tenantId, phone, score, refId }) {
     tenantId, phone, score, refId: refId || null,
     createdAt: new Date().toISOString(),
   };
-  if (isDbEnabled()) {
-    await db().query(
-      `INSERT INTO ratings (id, tenant_id, phone, score, ref_id) VALUES ($1,$2,$3,$4,$5)`,
-      [r.id, tenantId, phone, score, refId || null]
-    );
-    pending.delete(keyOf(tenantId, phone));
-    return r;
-  }
-  const all = loadJson(CSAT_FILE, "ratings");
-  all.push(r);
-  saveJson(CSAT_FILE, "ratings", all);
+  await db().rating.create({
+    data: { id: r.id, tenantId, phone, score, refId: refId || null },
+  });
   pending.delete(keyOf(tenantId, phone));
   return r;
 }
 
 export async function csatStats(tenantId) {
-  let all;
-  if (isDbEnabled()) {
-    const r = tenantId
-      ? await db().query(`SELECT score FROM ratings WHERE tenant_id=$1`, [tenantId])
-      : await db().query(`SELECT score FROM ratings`);
-    all = r.rows;
-  } else {
-    all = loadJson(CSAT_FILE, "ratings").filter((r) => !tenantId || r.tenantId === tenantId);
-  }
+  const rows = await db().rating.findMany({
+    where: tenantId ? { tenantId } : undefined,
+    select: { score: true },
+  });
   const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  all.forEach((r) => { if (dist[r.score] !== undefined) dist[r.score]++; });
-  const avg = all.length ? (all.reduce((s, r) => s + r.score, 0) / all.length).toFixed(2) : null;
-  return { count: all.length, avg: avg ? Number(avg) : null, dist };
+  rows.forEach((r) => { if (dist[r.score] !== undefined) dist[r.score]++; });
+  const avg = rows.length ? (rows.reduce((s, r) => s + r.score, 0) / rows.length).toFixed(2) : null;
+  return { count: rows.length, avg: avg ? Number(avg) : null, dist };
 }

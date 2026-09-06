@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "test": "node agent.mjs --test"
+    "test": "node agent.mjs --test",
+    "postinstall": "prisma generate",
+    "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script"
   },
   "keywords": [
     "whatsapp",
@@ -19,9 +21,12 @@
   "license": "MIT",
   "dependencies": {
     "@google/genai": "^1.0.0",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "openai": "^4.104.0",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "prisma": "^7.10.0"
   }
 }
