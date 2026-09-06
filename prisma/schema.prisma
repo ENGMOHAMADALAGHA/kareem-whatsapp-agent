@@ -13,6 +13,9 @@ model Tenant {
   enabled      Boolean  @default(true)
   phoneNumberId String? @map("phone_number_id")
   verifyToken  String?  @map("verify_token")
+  whatsappToken String? @map("whatsapp_token") // مشفر بـ AES-GCM (أو plaintext بتطوير محلي)
+  plan         String   @default("trial") // trial | basic | clinic | pro
+  trialEndsAt  DateTime? @map("trial_ends_at") @db.Timestamptz(6)
   businessType String   @default("general") @map("business_type")
   products     Json     @default("[]")
   deliveryFee  Float    @default(5) @map("delivery_fee")

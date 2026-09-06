@@ -84,18 +84,30 @@ export function registerAdminRoutes(app) {
   app.post("/admin/tenants", async (req, res) => {
     try {
       const created = await addTenant(req.body || {});
-      console.log(`  ➕ tenant جديد: ${created.id} (${created.name})`);
-      res.status(201).json({ ok: true, tenant: created });
+      console.log(`  ➕ tenant جديد: ${created.id} (${created.name}) plan=${created.plan}`);
+      const { whatsappToken: _s, ...safe } = created;
+      res.status(201).json({ ok: true, tenant: { ...safe, hasOwnToken: !!created.whatsappToken } });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });
     }
   });
   app.patch("/admin/tenants/:id", async (req, res) => {
     try {
-      const { updateTenant } = await import("../../../tenants.mjs");
+      const { updateTenant, isTrialExpired } = await import("../../../tenants.mjs");
       const updated = await updateTenant(req.params.id, req.body || {});
-      console.log(`  🔌 tenant ${updated.id} enabled=${updated.enabled}`);
-      res.json({ ok: true, tenant: { id: updated.id, enabled: updated.enabled } });
+      console.log(`  🔌 tenant ${updated.id} enabled=${updated.enabled} plan=${updated.plan}`);
+      res.json({ ok: true, tenant: { id: updated.id, enabled: updated.enabled, plan: updated.plan, trialExpired: isTrialExpired(updated) } });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  // حذف بوت (سوبر فقط عبر SUPER_ONLY) — الحذف متتالٍ لكل بياناته
+  app.delete("/admin/tenants/:id", async (req, res) => {
+    try {
+      const { deleteTenant } = await import("../../../tenants.mjs");
+      const out = await deleteTenant(req.params.id);
+      console.log(`  🗑️ حذف tenant: ${out.id}`);
+      res.json({ ok: true, deleted: out.id });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });
     }
@@ -121,9 +133,9 @@ export function registerAdminRoutes(app) {
   app.get("/admin/tenants/:id", async (req, res) => {
     const t = await getTenantFull(req.params.id);
     if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
-    // إخفاء التوكن
-    const { whatsapp_token, ...safe } = t;
-    res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token } });
+    // إخفاء التوكن (المشفر والمفكوك معاً — لا يغادر الخادم أبداً)
+    const { whatsapp_token, whatsappToken: _enc, ...safe } = t;
+    res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token, hasOwnToken: !!_enc } });
   });
   app.get("/admin/appointments", async (req, res) => {
     const scope = resolveScope(req, req.query.tenant);
@@ -195,6 +207,10 @@ export function registerAdminRoutes(app) {
     if (phones.length > 50) return res.status(400).json({ ok: false, error: "الحد الأقصى 50 رقم لكل بث" });
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const { isTenantActive } = await import("../../../tenants.mjs");
+    if (!isTenantActive(tenant)) {
+      return res.status(403).json({ ok: false, error: tenant.enabled === false ? "هذا البوت موقوف" : "الفترة التجريبية لهذا البوت انتهت — جدد الخطة" });
+    }
     // امتثال: استبعاد من ألغوا الاشتراك قبل الإرسال
     const { isOptedOut } = await import("../../compliance/messaging.mjs");
     const eligible = [];

@@ -11,6 +11,111 @@
   .msg-assistant { background: #f1f5f9; margin-right: auto; }
   .blink { animation: bl 1s infinite; }
   @keyframes bl { 50% { opacity: .4; } }
+
+  /* ── Enterprise console design system ── */
+  :root {
+    --saas-radius: 1rem;
+    --saas-shadow: 0 10px 25px -8px rgba(15, 23, 42, .18);
+    --saas-shadow-hover: 0 18px 38px -10px rgba(15, 23, 42, .28);
+  }
+  .kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; }
+  @media (min-width: 768px) { .kpi-grid { grid-template-columns: repeat(5, 1fr); } }
+  .kpi-card {
+    position: relative; overflow: hidden; border-radius: var(--saas-radius);
+    padding: .9rem 1rem; color: #fff; box-shadow: var(--saas-shadow);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .kpi-card:hover { transform: translateY(-3px); box-shadow: var(--saas-shadow-hover); }
+  .kpi-card::after {
+    content: ""; position: absolute; inset-inline-start: -30px; top: -30px;
+    width: 110px; height: 110px; border-radius: 50%;
+    background: rgba(255, 255, 255, .14);
+  }
+  .kpi-blue { background: linear-gradient(135deg, #2563eb, #1e40af); }
+  .kpi-green { background: linear-gradient(135deg, #059669, #065f46); }
+  .kpi-red { background: linear-gradient(135deg, #dc2626, #7f1d1d); }
+  .kpi-amber { background: linear-gradient(135deg, #d97706, #92400e); }
+  .kpi-violet { background: linear-gradient(135deg, #7c3aed, #4c1d95); }
+  .kpi-num { font-size: 1.7rem; font-weight: 800; line-height: 1.1; }
+  .kpi-label { font-size: .75rem; opacity: .92; }
+
+  .bots-grid { display: grid; grid-template-columns: 1fr; gap: .9rem; }
+  @media (min-width: 768px) { .bots-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1280px) { .bots-grid { grid-template-columns: repeat(3, 1fr); } }
+  .bot-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: var(--saas-radius);
+    box-shadow: var(--saas-shadow); overflow: hidden;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    animation: cardIn .3s ease both;
+  }
+  .bot-card:hover { transform: translateY(-4px); box-shadow: var(--saas-shadow-hover); border-color: #bfdbfe; }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } }
+  .bot-card.suspended { border-color: #fecaca; background: linear-gradient(180deg, #fff, #fef2f2); }
+  .bot-avatar {
+    width: 3rem; height: 3rem; border-radius: 1rem; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; color: #fff; box-shadow: inset 0 -3px 8px rgba(0,0,0,.2);
+  }
+  .av-dental { background: linear-gradient(135deg, #0ea5e9, #0369a1); }
+  .av-sport-store { background: linear-gradient(135deg, #f59e0b, #b45309); }
+  .av-retail { background: linear-gradient(135deg, #8b5cf6, #5b21b6); }
+  .av-beauty { background: linear-gradient(135deg, #ec4899, #9d174d); }
+  .av-restaurant { background: linear-gradient(135deg, #ef4444, #991b1b); }
+  .av-general { background: linear-gradient(135deg, #64748b, #334155); }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: .35rem;
+    font-size: .72rem; font-weight: 700; padding: .15rem .6rem; border-radius: 999px;
+  }
+  .st-on { background: #dcfce7; color: #166534; }
+  .st-off { background: #fee2e2; color: #991b1b; }
+  .st-trial { background: #fef3c7; color: #92400e; }
+  .pulse-dot { width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; position: relative; }
+  .st-on .pulse-dot::after {
+    content: ""; position: absolute; inset: -4px; border-radius: 50%;
+    border: 2px solid currentColor; opacity: .6; animation: ping 1.6s ease-out infinite;
+  }
+  @keyframes ping { 0% { transform: scale(.5); opacity: .8; } 100% { transform: scale(1.2); opacity: 0; } }
+  .chip { font-size: .7rem; padding: .1rem .5rem; border-radius: .5rem; background: #f1f5f9; color: #475569; }
+  .bot-toolbar { display: flex; gap: .4rem; padding-top: .5rem; border-top: 1px dashed #e2e8f0; margin-top: .5rem; }
+  .tool-btn { flex: 1; font-size: .75rem; font-weight: 700; padding: .45rem .2rem; border-radius: .6rem; transition: filter .15s ease, transform .1s ease; }
+  .tool-btn:hover { filter: brightness(.94); }
+  .tool-btn:active { transform: scale(.97); }
+
+  /* Wizard */
+  .glass-overlay {
+    position: fixed; inset: 0; z-index: 50; display: flex;
+    align-items: center; justify-content: center; padding: 1rem;
+    background: rgba(15, 23, 42, .55); backdrop-filter: blur(6px);
+    animation: fadeIn .2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } }
+  .wizard-card {
+    background: #fff; border-radius: 1.25rem; width: 32rem; max-width: 96vw;
+    max-height: 92vh; overflow: auto; box-shadow: 0 30px 60px -15px rgba(0,0,0,.4);
+    animation: popIn .25s cubic-bezier(.2,.9,.3,1.2);
+  }
+  @keyframes popIn { from { opacity: 0; transform: translateY(16px) scale(.98); } }
+  .wiz-steps { display: flex; gap: .25rem; }
+  .wiz-step { flex: 1; text-align: center; font-size: .68rem; color: #94a3b8; }
+  .wiz-step .dot {
+    width: 1.9rem; height: 1.9rem; margin: 0 auto .2rem; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: #e2e8f0; color: #64748b; font-weight: 800; transition: all .2s ease;
+  }
+  .wiz-step.done .dot { background: #bbf7d0; color: #166534; }
+  .wiz-step.now .dot { background: #1d4ed8; color: #fff; box-shadow: 0 0 0 4px #bfdbfe; }
+  .wiz-step.now { color: #1e40af; font-weight: 700; }
+  .wiz-pane { animation: slideIn .22s ease; }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(-14px); } }
+  .field { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .55rem .7rem; font-size: .875rem; }
+  .field:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px #bfdbfe; }
+  .field-err { border-color: #ef4444 !important; box-shadow: 0 0 0 3px #fecaca !important; }
+  .skeleton {
+    border-radius: var(--saas-radius); min-height: 9rem;
+    background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+    background-size: 200% 100%; animation: shimmer 1.2s infinite;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
@@ -29,6 +134,7 @@
     <button data-tab="send" class="tab-btn px-4 py-2 rounded bg-white shadow">📢 بث</button>
     <button data-tab="crm" class="tab-btn px-4 py-2 rounded bg-white shadow">📊 السجل</button>
     <button data-tab="report" class="tab-btn px-4 py-2 rounded bg-white shadow">💰 التقرير</button>
+    <button data-tab="bots" id="botsTabBtn" class="tab-btn px-4 py-2 rounded bg-white shadow">🤖 البوتات</button>
   </div>
 
   <!-- Inbox -->
@@ -94,6 +200,91 @@
     </div>
     <div id="crmList" class="space-y-1 text-sm max-h-[60vh] overflow-auto"></div>
   </div>
+
+  <!-- Bots console (سوبر أدمن فقط) -->
+  <div id="tab-bots" class="hidden space-y-3">
+    <div class="kpi-grid" id="botsKpis">
+      <div class="kpi-card kpi-blue"><div class="kpi-num" id="kpiTotal">—</div><div class="kpi-label">🤖 إجمالي البوتات</div></div>
+      <div class="kpi-card kpi-green"><div class="kpi-num" id="kpiActive">—</div><div class="kpi-label">✅ نشطة</div></div>
+      <div class="kpi-card kpi-red"><div class="kpi-num" id="kpiSuspended">—</div><div class="kpi-label">⛔ موقوفة / منتهية</div></div>
+      <div class="kpi-card kpi-amber"><div class="kpi-num" id="kpiReview">—</div><div class="kpi-label">🔍 طلبات قيد المراجعة</div></div>
+      <div class="kpi-card kpi-violet"><div class="kpi-num" id="kpiPlans">—</div><div class="kpi-label">💳 خطط مدفوعة</div></div>
+    </div>
+    <div class="bg-white rounded shadow p-3">
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
+        <h3 class="font-bold text-lg">إدارة البوتات</h3>
+        <input id="botSearch" class="border rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[10rem]" placeholder="🔎 بحث بالاسم أو المعرف...">
+        <button id="botsRefresh" class="px-3 py-1.5 rounded-lg bg-slate-100 text-sm font-bold hover:bg-slate-200">↻ تحديث</button>
+        <button id="newBotBtn" class="px-4 py-1.5 rounded-lg text-white text-sm font-bold" style="background:linear-gradient(135deg,#2563eb,#1e40af)">＋ بوت جديد</button>
+      </div>
+      <div id="botsList" class="bots-grid"></div>
+    </div>
+  </div>
+
+  <!-- معالج تأهيل البوت (Wizard) -->
+  <div id="botModal" class="hidden glass-overlay" style="display:none">
+    <div class="wizard-card p-5" dir="rtl">
+      <h2 id="botModalTitle" class="font-bold text-lg mb-1">＋ بوت جديد</h2>
+      <p class="text-xs text-slate-500 mb-3">أكمل الخطوات الأربع لتأهيل البوت وتشغيله</p>
+      <div class="wiz-steps mb-4" id="wizSteps">
+        <div class="wiz-step" data-s="0"><div class="dot">1</div>الهوية</div>
+        <div class="wiz-step" data-s="1"><div class="dot">2</div>واتساب</div>
+        <div class="wiz-step" data-s="2"><div class="dot">3</div>الدفع</div>
+        <div class="wiz-step" data-s="3"><div class="dot">4</div>الخطة</div>
+      </div>
+      <!-- Step 1: identity -->
+      <div class="wiz-pane space-y-2" data-pane="0">
+        <input id="botId" class="field" placeholder="المعرف (انجليزي صغير: clinic-noor)">
+        <input id="botNameFull" class="field" placeholder="اسم النشاط (عيادة النور)">
+        <input id="botBotName" class="field" placeholder="اسم البوت (نور)">
+        <select id="botBiz" class="field">
+          <option value="dental">🦷 عيادة أسنان</option>
+          <option value="sport-store">👟 متجر رياضي</option>
+          <option value="retail">🏪 تجزئة</option>
+          <option value="beauty">💅 تجميل</option>
+          <option value="restaurant">🍔 مطعم</option>
+          <option value="general">📦 عام</option>
+        </select>
+      </div>
+      <!-- Step 2: whatsapp -->
+      <div class="wiz-pane space-y-2 hidden" data-pane="1">
+        <input id="botPhoneId" class="field" placeholder="WhatsApp Phone ID" dir="ltr">
+        <input id="botVerify" class="field" placeholder="Verify Token" dir="ltr">
+        <input id="botToken" type="password" class="field" placeholder="WhatsApp Token الخاص" dir="ltr">
+        <p class="text-xs text-slate-500">💡 اترك الحقول فارغة لاستخدام إعدادات السيرفر المشتركة. التوكن يُشفّر بـ AES-GCM ولا يظهر مجدداً.</p>
+      </div>
+      <!-- Step 3: payments -->
+      <div class="wiz-pane space-y-2 hidden" data-pane="2">
+        <div class="flex gap-2">
+          <input id="botCliqNum" class="field flex-1" placeholder="رقم CliQ" dir="ltr">
+          <input id="botCliqName" class="field flex-1" placeholder="اسم CliQ">
+        </div>
+        <textarea id="botWallets" class="field" rows="3" placeholder="محافظ إضافية (سطر لكل محفظة: النوع | الرقم | الاسم)"></textarea>
+        <p class="text-xs text-slate-500">💡 الإيصالات تُتحقق تلقائياً بالذكاء الاصطناعي عند إرسال لقطة الشاشة.</p>
+      </div>
+      <!-- Step 4: plan & review -->
+      <div class="wiz-pane space-y-2 hidden" data-pane="3">
+        <div class="flex gap-2">
+          <select id="botPlan" class="field flex-1">
+            <option value="trial">تجريبي trial (14 يوم)</option>
+            <option value="basic">أساسي basic</option>
+            <option value="clinic">عيادات clinic</option>
+            <option value="pro">احترافي pro</option>
+          </select>
+          <input id="botTrial" type="date" class="field flex-1" title="نهاية التجربة">
+        </div>
+        <label class="flex items-center gap-2 text-sm"><input id="botEnabled" type="checkbox" checked> مفعّل فوراً</label>
+        <div id="botReview" class="text-xs bg-slate-50 border rounded-lg p-2 space-y-0.5"></div>
+      </div>
+      <div id="botMsg" class="text-xs text-red-500 min-h-[1rem] mt-2"></div>
+      <div class="flex gap-2 mt-2">
+        <button id="botBack" class="flex-1 py-2 rounded-lg bg-slate-200 font-bold">رجوع</button>
+        <button id="botNext" class="flex-1 py-2 rounded-lg text-white font-bold" style="background:linear-gradient(135deg,#2563eb,#1e40af)">التالي</button>
+        <button id="botSave" class="flex-1 py-2 rounded-lg text-white font-bold hidden" style="background:linear-gradient(135deg,#059669,#065f46)">✓ إنشاء البوت</button>
+        <button id="botCancel" class="px-4 py-2 rounded-lg bg-slate-100 font-bold">✕</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -155,7 +346,11 @@ function showLogin() {
 
 async function loadTenants() {
   if (isPortal && !portalToken) { showLogin(); return; }
-  // في البوابة: البوت معروف من التوكن — لا اختيار
+  // في البوابة: البوت معروف من التوكن — لا اختيار ولا تبويب بوتات
+  if (isPortal) {
+    const bb = $("botsTabBtn");
+    if (bb) bb.style.display = "none";
+  }
   if (isPortal && portalToken) {
     try {
       const me = JSON.parse(atob(portalToken.split(".")[1]));
@@ -350,6 +545,7 @@ async function loadCrm() {
 
 function refreshAll() {
   loadInbox(); loadOrders(); loadBooking(); loadCsat(); loadBc(); loadCrm(); loadReport();
+  if (!isPortal) loadBots();
   if (cur.phone) loadConv();
 }
 
@@ -357,7 +553,7 @@ document.querySelectorAll("#tabs button").forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll("#tabs button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
-    ["inbox", "orders", "booking", "csat", "send", "crm", "report"].forEach((t) => $("tab-" + t).classList.add("hidden"));
+    ["inbox", "orders", "booking", "csat", "send", "crm", "report", "bots"].forEach((t) => $("tab-" + t).classList.add("hidden"));
     $("tab-" + b.dataset.tab).classList.remove("hidden");
   };
 });
@@ -375,6 +571,310 @@ $("bcBtn").onclick = async () => {
   alert(j.ok ? "تم البث" : j.error);
   loadBc();
 };
+
+// ── وحدة تحكم البوتات (Enterprise Console) ──
+let editingBotId = null;
+let wizStep = 0;
+let botsCache = [];
+const BIZ_ICON = { dental: "🦷", "sport-store": "👟", retail: "🏪", beauty: "💅", restaurant: "🍔", general: "📦" };
+const PLAN_AR = { trial: "تجريبي", basic: "أساسي", clinic: "عيادات", pro: "احترافي" };
+
+function botStatus(t) {
+  if (t.enabled === false) return "off";
+  if (t.trialExpired) return "trial";
+  return "on";
+}
+
+async function loadBots() {
+  if (isPortal) return;
+  const box = $("botsList");
+  box.innerHTML = "";
+  for (let i = 0; i < 3; i++) {
+    const s = document.createElement("div");
+    s.className = "skeleton";
+    box.appendChild(s);
+  }
+  let tenants = [];
+  try {
+    const j = await api("/admin/tenants");
+    tenants = j.tenants || [];
+  } catch (e) { box.innerHTML = ""; return; }
+  botsCache = tenants;
+  renderKpis(tenants);
+  applyBotFilter();
+}
+
+async function renderKpis(tenants) {
+  const active = tenants.filter((t) => botStatus(t) === "on").length;
+  const suspended = tenants.length - active;
+  const paid = tenants.filter((t) => (t.plan || "trial") !== "trial").length;
+  $("kpiTotal").textContent = tenants.length;
+  $("kpiActive").textContent = active;
+  $("kpiSuspended").textContent = suspended;
+  $("kpiPlans").textContent = paid;
+  $("kpiReview").textContent = "…";
+  // قيد المراجعة: مجموع الطلبات pending_review عبر البوتات (أفضل-جهد، متوازٍ)
+  try {
+    const counts = await Promise.all(tenants.map(async (t) => {
+      try {
+        const o = await api("/admin/orders?tenant=" + encodeURIComponent(t.id));
+        return (o.orders || []).filter((x) => x.status === "pending_review").length;
+      } catch (e) { return 0; }
+    }));
+    $("kpiReview").textContent = counts.reduce((a, b) => a + b, 0);
+  } catch (e) { $("kpiReview").textContent = "—"; }
+}
+
+function applyBotFilter() {
+  const q = ($("botSearch").value || "").trim().toLowerCase();
+  const box = $("botsList");
+  box.innerHTML = "";
+  const list = botsCache.filter((t) =>
+    !q || (t.id || "").toLowerCase().includes(q) ||
+    (t.name || "").includes($("botSearch").value.trim()) ||
+    (t.botName || "").includes($("botSearch").value.trim()));
+  if (!list.length) {
+    box.innerHTML = "<p class='text-slate-400 col-span-full text-center py-6'>" +
+      (botsCache.length ? "لا نتائج مطابقة للبحث." : "لا بوتات بعد — أنشئ أول بوت من الزر أعلاه 🚀") + "</p>";
+    return;
+  }
+  list.forEach((t, i) => box.appendChild(botCard(t, i)));
+}
+
+function botCard(t, i) {
+  const st = botStatus(t);
+  const card = document.createElement("div");
+  card.className = "bot-card p-4" + (st === "on" ? "" : " suspended");
+  card.style.animationDelay = Math.min(i * 40, 400) + "ms";
+  // الرأس: أفاتار + اسم + حالة
+  const head = document.createElement("div");
+  head.className = "flex items-center gap-3 mb-2";
+  const av = document.createElement("div");
+  av.className = "bot-avatar av-" + (BIZ_ICON[t.businessType] ? t.businessType : "general");
+  av.textContent = BIZ_ICON[t.businessType] || "📦";
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "flex-1 min-w-0";
+  const nm = document.createElement("div");
+  nm.className = "font-extrabold truncate";
+  nm.textContent = t.botName || t.id;
+  const sub = document.createElement("div");
+  sub.className = "text-xs text-slate-500 truncate";
+  sub.textContent = (t.name || "") + " • " + t.id;
+  titleWrap.append(nm, sub);
+  const pill = document.createElement("span");
+  pill.className = "status-pill " + (st === "on" ? "st-on" : st === "off" ? "st-off" : "st-trial");
+  const dot = document.createElement("span");
+  dot.className = "pulse-dot";
+  const lbl = document.createElement("span");
+  lbl.textContent = st === "on" ? "نشط" : st === "off" ? "موقوف" : "تجربة منتهية";
+  pill.append(dot, lbl);
+  head.append(av, titleWrap, pill);
+  card.appendChild(head);
+  // المقاييس
+  const grid = document.createElement("div");
+  grid.className = "flex flex-wrap gap-1.5 text-xs mb-1";
+  const chips = [
+    "💳 " + (PLAN_AR[t.plan] || t.plan || "تجريبي"),
+    t.trialEndsAt ? "📅 حتى " + String(t.trialEndsAt).slice(0, 10) : "📅 بلا انتهاء",
+    "📞 " + (t.phone_number_id || "بدون PhoneID"),
+    t.hasOwnToken ? "🔑 توكن خاص" : "🔗 توكن مشترك",
+    "📦 " + (t.productsCount ?? 0) + " منتجات",
+  ];
+  chips.forEach((c) => {
+    const s = document.createElement("span");
+    s.className = "chip";
+    s.textContent = c;
+    grid.appendChild(s);
+  });
+  card.appendChild(grid);
+  // شريط الأدوات
+  const bar = document.createElement("div");
+  bar.className = "bot-toolbar";
+  const mk = (label, bg, fn) => {
+    const b = document.createElement("button");
+    b.className = "tool-btn " + bg;
+    b.textContent = label;
+    b.onclick = fn;
+    return b;
+  };
+  bar.appendChild(mk(st === "off" ? "▶ تفعيل" : "⏸ إيقاف", "bg-amber-100", () => toggleBot(t.id, st === "off")));
+  bar.appendChild(mk("✏ تعديل", "bg-slate-100", () => openBotModal(t.id)));
+  bar.appendChild(mk("📥 المحادثات", "bg-blue-100", () => jumpToTenantInbox(t.id)));
+  bar.appendChild(mk("🗑 حذف", "bg-red-100", () => deleteBot(t.id)));
+  card.appendChild(bar);
+  return card;
+}
+
+function jumpToTenantInbox(id) {
+  cur.tenant = id;
+  cur.phone = "";
+  const sel = $("tenantSel");
+  if (sel) sel.value = id;
+  document.querySelector('#tabs button[data-tab="inbox"]').click();
+  refreshAll();
+}
+
+// ── المعالج (Wizard) ──
+function wizShow(n) {
+  wizStep = Math.max(0, Math.min(3, n));
+  document.querySelectorAll("#wizSteps .wiz-step").forEach((el) => {
+    const s = Number(el.dataset.s);
+    el.classList.toggle("now", s === wizStep);
+    el.classList.toggle("done", s < wizStep);
+    el.querySelector(".dot").textContent = s < wizStep ? "✓" : String(s + 1);
+  });
+  document.querySelectorAll(".wiz-pane").forEach((el) => {
+    el.classList.toggle("hidden", Number(el.dataset.pane) !== wizStep);
+  });
+  $("botBack").style.visibility = wizStep === 0 ? "hidden" : "visible";
+  const last = wizStep === 3;
+  $("botNext").classList.toggle("hidden", last);
+  $("botSave").classList.toggle("hidden", !last);
+  if (last) renderBotReview();
+  $("botMsg").textContent = "";
+}
+
+function wizValidate() {
+  let ok = true;
+  const mark = (id, bad) => { $(id).classList.toggle("field-err", bad); if (bad) ok = false; };
+  if (wizStep === 0) {
+    if (!editingBotId) mark("botId", !/^[a-z0-9-]{3,40}$/.test($("botId").value.trim()));
+    mark("botNameFull", !$("botNameFull").value.trim());
+    mark("botBotName", !$("botBotName").value.trim());
+    if (!ok) $("botMsg").textContent = "تحقق من حقول الهوية (المعرف انجليزي صغير 3 أحرف فأكثر)";
+  }
+  return ok;
+}
+
+function renderBotReview() {
+  const b = collectBotForm();
+  const rows = [
+    ["البوت", (b.botName || "") + " — " + (b.name || "")],
+    ["المعرف", editingBotId || b.id || "—"],
+    ["النوع", $("botBiz").options[$("botBiz").selectedIndex].textContent],
+    ["Phone ID", b.phoneNumberId || "مشترك"],
+    ["التوكن", b.whatsappToken ? "خاص جديد 🔑" : "كما هو"],
+    ["CliQ", b.features?.cliq ? b.features.cliq.number + " (" + (b.features.cliq.name || "") + ")" : "—"],
+    ["المحافظ", (b.features?.paymentWallets || []).length + " محفظة"],
+    ["الخطة", ($("botPlan").options[$("botPlan").selectedIndex].textContent) + (b.trialEndsAt ? " حتى " + b.trialEndsAt : "")],
+    ["الحالة", b.enabled ? "مفعّل ✅" : "موقوف ⛔"],
+  ];
+  const box = $("botReview");
+  box.innerHTML = "";
+  rows.forEach(([k, v]) => {
+    const d = document.createElement("div");
+    const bEl = document.createElement("b");
+    bEl.textContent = k + ": ";
+    d.appendChild(bEl);
+    d.appendChild(document.createTextNode(v));
+    box.appendChild(d);
+  });
+}
+
+function fillBotForm(t) {
+  $("botId").value = t?.id || "";
+  $("botId").disabled = !!t;
+  $("botNameFull").value = t?.name || "";
+  $("botBotName").value = t?.botName || "";
+  $("botBiz").value = t?.businessType || "general";
+  $("botPhoneId").value = t?.phoneNumberId || t?.phone_number_id || "";
+  $("botVerify").value = t?.verifyToken || t?.verify_token || "";
+  $("botToken").value = "";
+  $("botToken").placeholder = t?.hasOwnToken ? "توكن خاص محفوظ ✅ (اتركه فارغاً للإبقاء)" : "WhatsApp Token الخاص (اختياري)";
+  const f = t?.features || {};
+  $("botCliqNum").value = f.cliq?.number || "";
+  $("botCliqName").value = f.cliq?.name || "";
+  $("botWallets").value = (f.paymentWallets || []).map((w) => [w.type, w.number, w.name || ""].filter(Boolean).join(" | ")).join("\n");
+  $("botPlan").value = t?.plan || "trial";
+  $("botTrial").value = t?.trialEndsAt ? String(t.trialEndsAt).slice(0, 10) : "";
+  $("botEnabled").checked = t ? t.enabled !== false : true;
+  $("botMsg").textContent = "";
+}
+
+async function openBotModal(id) {
+  editingBotId = id || null;
+  $("botModalTitle").textContent = id ? "✏ تعديل بوت" : "＋ معالج تأهيل بوت جديد";
+  if (id) {
+    try {
+      const j = await api("/admin/tenants/" + encodeURIComponent(id));
+      fillBotForm(j.tenant);
+    } catch (e) { $("botMsg").textContent = "تعذر تحميل البوت"; return; }
+  } else fillBotForm(null);
+  wizShow(0);
+  $("botModal").classList.remove("hidden");
+  $("botModal").style.display = "flex";
+  $("botSave").textContent = id ? "✓ حفظ التعديلات" : "✓ إنشاء البوت";
+}
+function closeBotModal() {
+  $("botModal").classList.add("hidden");
+  $("botModal").style.display = "none";
+  editingBotId = null;
+}
+
+function collectBotForm() {
+  const wallets = $("botWallets").value.split("\n").map((s) => s.trim()).filter(Boolean).map((line) => {
+    const [type, number, name] = line.split("|").map((s) => s.trim());
+    return { type: type || "محفظة", number: number || "", name: name || "" };
+  }).filter((w) => w.number);
+  const features = {};
+  if ($("botCliqNum").value.trim()) features.cliq = { number: $("botCliqNum").value.trim(), name: $("botCliqName").value.trim() };
+  if (wallets.length) features.paymentWallets = wallets;
+  const body = {
+    name: $("botNameFull").value.trim(),
+    botName: $("botBotName").value.trim(),
+    businessType: $("botBiz").value,
+    phoneNumberId: $("botPhoneId").value.trim() || null,
+    verifyToken: $("botVerify").value.trim() || null,
+    plan: $("botPlan").value,
+    trialEndsAt: $("botTrial").value || null,
+    enabled: $("botEnabled").checked,
+  };
+  if (Object.keys(features).length) body.features = features;
+  if ($("botToken").value.trim()) body.whatsappToken = $("botToken").value.trim();
+  if (!editingBotId) body.id = $("botId").value.trim();
+  return body;
+}
+
+async function saveBot() {
+  const body = collectBotForm();
+  if (!editingBotId && !body.id) { $("botMsg").textContent = "المعرف مطلوب"; return; }
+  if (!body.name || !body.botName) { $("botMsg").textContent = "اسم النشاط واسم البوت مطلوبان"; return; }
+  try {
+    if (editingBotId) {
+      await api("/admin/tenants/" + encodeURIComponent(editingBotId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    } else {
+      await api("/admin/tenants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    }
+    closeBotModal();
+    await loadTenants(); // يظهر البوت فوراً في المحدد
+    loadBots();
+  } catch (e) { $("botMsg").textContent = "خطأ: " + e.message; }
+}
+
+async function toggleBot(id, enable) {
+  if (!confirm((enable ? "تفعيل" : "إيقاف") + " البوت " + id + "؟")) return;
+  await api("/admin/tenants/" + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enable }) });
+  loadBots();
+}
+
+async function deleteBot(id) {
+  if (!confirm("حذف البوت " + id + " نهائياً مع كل بياناته؟ لا يمكن التراجع!")) return;
+  const word = prompt("للتأكيد اكتب معرف البوت (" + id + "):");
+  if (word !== id) { alert("غير متطابق — أُلغي الحذف"); return; }
+  try {
+    await api("/admin/tenants/" + encodeURIComponent(id), { method: "DELETE" });
+    await loadTenants();
+    loadBots();
+  } catch (e) { alert("فشل الحذف: " + e.message); }
+}
+
+$("newBotBtn").onclick = () => openBotModal(null);
+$("botCancel").onclick = closeBotModal;
+$("botSave").onclick = saveBot;
+$("botNext").onclick = () => { if (wizValidate()) wizShow(wizStep + 1); };
+$("botBack").onclick = () => wizShow(wizStep - 1);
+$("botsRefresh").onclick = loadBots;
+$("botSearch").oninput = applyBotFilter;
 
 (async () => { await loadTenants(); refreshAll(); setInterval(() => { loadInbox(); if (cur.phone) loadConv(); }, 4000); })();
 </script>

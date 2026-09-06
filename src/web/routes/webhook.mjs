@@ -108,8 +108,8 @@ async function processWebhookBody(body) {
         // حل الـ tenant من رقم البوت المستقبل (عزل تام)
         const phoneNumberId = value.metadata?.phone_number_id || value.phone_number_id || null;
         const tenant = await resolveTenant({ phoneNumberId });
-        if (tenant && tenant.enabled === false) {
-          console.log(`  ⏸️ tenant موقوف: ${tenant.id} - تم تجاهل الرسالة`);
+        if (tenant && (tenant.enabled === false || tenant.trialExpired)) {
+          console.log(`  ⏸️ tenant موقوف/منتهي: ${tenant.id} - تم تجاهل الرسالة`);
           continue;
         }
 

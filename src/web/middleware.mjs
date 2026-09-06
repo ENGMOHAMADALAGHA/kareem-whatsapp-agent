@@ -14,10 +14,13 @@ export const adminAuth = async (req, res, next) => {
     const { verifyClientToken } = await import("../../portal.mjs");
     const p = verifyClientToken(encoded);
     if (p) {
-      // kill switch: الموقوف لا يدخل
+      // kill switch + trial: الموقوف أو منتهي التجربة لا يدخل
       const t = await getTenantFull(p.tenantId);
       if (!t || t.enabled === false) {
         return res.status(403).json({ ok: false, error: "هذا البوت موقوف — تواصل مع الإدارة" });
+      }
+      if (t.trialExpired) {
+        return res.status(403).json({ ok: false, error: "الفترة التجريبية انتهت — جدد خطتك لمتابعة الدخول" });
       }
       if (SUPER_ONLY.some((s) => req.path === s || req.path.startsWith(s + "/"))) {
         return res.status(403).json({ ok: false, error: "غير مصرح" });

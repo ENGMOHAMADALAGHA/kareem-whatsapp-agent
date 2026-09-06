@@ -1,4 +1,5 @@
 import { systemDb } from "./src/security/tenantGuard.mjs";
+import { decryptSecret, encryptSecret } from "./src/security/secrets.mjs";
 
 // كاش قصير للبوتات (تتغير نادراً)
 let cache = { data: null, at: 0 };
@@ -26,7 +27,21 @@ function toPublic(t) {
     phone_number_id: t.phoneNumberId || process.env.WHATSAPP_PHONE_ID || null,
     isDefault: t.id === "kareem-sport",
     productsCount: (t.products || []).length,
+    plan: t.plan || "trial",
+    trialEndsAt: t.trialEndsAt || null,
+    trialExpired: isTrialExpired(t),
+    hasOwnToken: !!t.whatsappToken,
   };
+}
+
+// انتهاء التجربة: plan=trial مع trialEndsAt ماضٍ (null = مفتوح/مدفوع)
+// البوت نشط = مفعّل وغير منتهي التجربة
+export function isTrialExpired(t) {
+  if (!t || (t.plan || "trial") !== "trial" || !t.trialEndsAt) return false;
+  return new Date(t.trialEndsAt) < new Date();
+}
+export function isTenantActive(t) {
+  return !!t && t.enabled !== false && !isTrialExpired(t);
 }
 
 export async function listTenants() {
@@ -66,11 +81,18 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
 }
 
 function withEnvDefaults(t) {
+  let perTenantToken = null;
+  try {
+    // فك متزامن وخفيف (AES-GCM) — التوكن الخاص أولاً، ثم المشترك
+    if (t?.whatsappToken) perTenantToken = decryptSecret(t.whatsappToken);
+  } catch { /* رجوع للمشترك */ }
   return {
     ...t,
     phone_number_id: t.phoneNumberId || process.env.WHATSAPP_PHONE_ID || null,
     verify_token: t.verifyToken || process.env.WEBHOOK_VERIFY_TOKEN || "my_secret_token",
-    whatsapp_token: process.env.WHATSAPP_TOKEN || null,
+    whatsapp_token: perTenantToken || process.env.WHATSAPP_TOKEN || null,
+    hasOwnToken: !!perTenantToken,
+    trialExpired: isTrialExpired(t),
   };
 }
 
@@ -91,10 +113,31 @@ export async function resolveTenantInput(input) {
   return input;
 }
 
+const PLANS = ["trial", "basic", "clinic", "pro"];
+function cleanPlan(p) {
+  const v = String(p || "trial").toLowerCase();
+  if (!PLANS.includes(v)) throw new Error(`plan غير صالح — المسموح: ${PLANS.join(", ")}`);
+  return v;
+}
+function cleanTrialDate(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) throw new Error("trialEndsAt تاريخ غير صالح");
+  return d;
+}
+
 export async function updateTenant(id, data) {
-  const allowed = ["name", "botName", "enabled", "phoneNumberId", "verifyToken", "businessType", "products", "deliveryFee", "bundleOffer", "tone", "languages", "features"];
+  const allowed = ["name", "botName", "enabled", "phoneNumberId", "verifyToken", "businessType", "products", "deliveryFee", "bundleOffer", "tone", "languages", "features", "plan", "trialEndsAt"];
   const clean = {};
   for (const k of allowed) if (data[k] !== undefined) clean[k] = data[k];
+  // whatsappToken يُقبل باسم whatsappToken أو whatsapp_token ويُشفر قبل التخزين
+  const rawToken = data.whatsappToken ?? data.whatsapp_token;
+  if (rawToken !== undefined) {
+    if (!rawToken) clean.whatsappToken = null; // مسح التوكن → رجوع للمشترك
+    else clean.whatsappToken = encryptSecret(String(rawToken));
+  }
+  if (clean.plan !== undefined) clean.plan = cleanPlan(clean.plan);
+  if (clean.trialEndsAt !== undefined) clean.trialEndsAt = cleanTrialDate(clean.trialEndsAt);
   const updated = await systemDb("tenants:update").tenant.update({ where: { id }, data: clean });
   invalidate();
   return updated;
@@ -107,14 +150,18 @@ export async function addTenant(data) {
   if (!/^[a-z0-9-]+$/.test(data.id)) {
     throw new Error("id يجب أن يكون حروف إنجليزية صغيرة وأرقام و - فقط");
   }
+  const rawToken = data.whatsappToken ?? data.whatsapp_token;
   const created = await systemDb("tenants:create").tenant.create({
     data: {
       id: data.id,
       name: data.name,
       botName: data.botName,
       enabled: data.enabled !== false,
-      phoneNumberId: data.phone_number_id || null,
-      verifyToken: data.verify_token || null,
+      phoneNumberId: data.phone_number_id || data.phoneNumberId || null,
+      verifyToken: data.verify_token || data.verifyToken || null,
+      whatsappToken: rawToken ? encryptSecret(String(rawToken)) : null,
+      plan: cleanPlan(data.plan),
+      trialEndsAt: cleanTrialDate(data.trialEndsAt ?? defaultTrialEnd()),
       businessType: data.businessType || "general",
       products: Array.isArray(data.products) ? data.products : [],
       deliveryFee: data.deliveryFee ?? 5,
@@ -126,6 +173,20 @@ export async function addTenant(data) {
   });
   invalidate();
   return created;
+}
+
+// تجربة افتراضية 14 يوماً للبوتات الجديدة (ما لم يُحدد plan مدفوع)
+function defaultTrialEnd() {
+  return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+}
+
+export async function deleteTenant(id) {
+  const all = await loadTenants();
+  if (all.length <= 1) throw new Error("ممنوع حذف البوت الأخير");
+  const row = await systemDb("tenants:delete").tenant.delete({ where: { id } }).catch(() => null);
+  if (!row) throw new Error("tenant غير موجود");
+  invalidate();
+  return { id: row.id };
 }
 
 // بناء System Prompt لكل tenant من إعداداته

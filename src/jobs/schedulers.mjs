@@ -1,4 +1,4 @@
-import { getTenantFull } from "../../tenants.mjs";
+import { getTenantFull, isTenantActive } from "../../tenants.mjs";
 import { dueReminders, markReminded } from "../../bookings.mjs";
 import { dueCartRemindersAll, markCartReminded } from "../../orders.mjs";
 import { logEvent } from "../../crm.mjs";
@@ -16,7 +16,7 @@ export function startSchedulers() {
         const due = await dueReminders({ afterMinutes: REMIND_AFTER_MIN });
         for (const b of due.slice(0, 20)) {
           const tenant = await getTenantFull(b.tenantId);
-          if (!tenant) continue;
+          if (!tenant || !isTenantActive(tenant)) continue;
           const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}.`;
           try {
             await sendWhatsAppMessage(b.phone, msg, tenant);
@@ -38,7 +38,7 @@ export function startSchedulers() {
         for (const [, list] of byPhone) {
           const first = list[0];
           const tenant = await getTenantFull(first.tenantId);
-          if (!tenant) continue;
+          if (!tenant || !isTenantActive(tenant)) continue;
           const lines = list.map((o) => `• ${o.id} ($${o.total})${o.paymentUrl ? ` — ${o.paymentUrl}` : ""}`).join("\n");
           const msg = list.length === 1
             ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} ($${first.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${first.paymentUrl || "ابعت تم للتأكيد"}`
