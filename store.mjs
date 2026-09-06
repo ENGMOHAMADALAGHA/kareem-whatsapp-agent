@@ -1,4 +1,5 @@
-import { db } from "./db.mjs";
+import { systemDb } from "./src/security/tenantGuard.mjs";
+const db = () => systemDb("store:kv");
 
 // مخزن حالات مؤقتة دائم (Takeover/حجز/CSAT) — بديل Maps الطائرة
 // كاش ذاكرة للسرعة + Postgres للبقاء بعد restart

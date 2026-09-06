@@ -21,8 +21,10 @@ export async function getOrder(id, tenantId) {
 }
 
 // صفحة الدفع العامة: تعرض الإجمالي فقط، لكن تُرجع tenantId/phone للمنطق الداخلي (لا تُعرض)
+// رابط الدفع capabilitiy-URL: الوصول بالرابط نفسه هو التفويض (مثل Stripe links)
 export async function getPublicOrder(id) {
-  const row = await db().order.findUnique({
+  const { systemDb } = await import("./src/security/tenantGuard.mjs");
+  const row = await systemDb("orders:public-pay-page").order.findUnique({
     where: { id },
     select: { id: true, tenantId: true, phone: true, items: true, total: true, currency: true, status: true },
   });
