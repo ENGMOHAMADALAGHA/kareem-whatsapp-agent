@@ -26,10 +26,10 @@ export async function getPublicOrder(id) {
   const { systemDb } = await import("./src/security/tenantGuard.mjs");
   const row = await systemDb("orders:public-pay-page").order.findUnique({
     where: { id },
-    select: { id: true, tenantId: true, phone: true, items: true, total: true, currency: true, status: true },
+    select: { id: true, tenantId: true, phone: true, items: true, total: true, currency: true, status: true, stripeSessionId: true },
   });
   if (!row) return null;
-  return { id: row.id, tenantId: row.tenantId, phone: row.phone, items: row.items, total: Number(row.total), currency: row.currency, status: row.status };
+  return { id: row.id, tenantId: row.tenantId, phone: row.phone, items: row.items, total: Number(row.total), currency: row.currency, status: row.status, stripeSessionId: row.stripeSessionId || null };
 }
 
 export async function listOrders(tenantId) {
@@ -103,6 +103,7 @@ function rowToOrder(r) {
     items: r.items, total: Number(r.total), currency: r.currency,
     status: r.status, paymentUrl: r.paymentUrl, proof: r.proof || null,
     cartRemindedAt: r.cartRemindedAt, createdAt: r.createdAt, paidAt: r.paidAt,
+    stripeSessionId: r.stripeSessionId || null,
   };
 }
 
@@ -138,6 +139,9 @@ export async function createPaymentLink(order, baseUrl) {
     mode: "payment",
     success_url: `${baseUrl}/pay/${order.id}?paid=1`,
     cancel_url: `${baseUrl}/pay/${order.id}?canceled=1`,
+    client_reference_id: order.id,
+    "metadata[orderId]": order.id,
+    "metadata[tenantId]": order.tenantId,
     "line_items[0][price_data][currency]": order.currency.toLowerCase(),
     "line_items[0][price_data][product_data][name]": `Order ${order.id}`,
     "line_items[0][price_data][unit_amount]": String(Math.round(order.total * 100)),
@@ -154,6 +158,10 @@ export async function createPaymentLink(order, baseUrl) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || "Stripe failed");
   await setOrderUrl(order.id, order.tenantId, data.url);
+  const { tenantDb: T } = await import("./src/security/tenantGuard.mjs");
+  await T(order.tenantId).order.update({
+    where: { id: order.id }, data: { stripeSessionId: data.id },
+  }).catch(() => null);
   return { url: data.url, mock: false, sessionId: data.id };
 }
 

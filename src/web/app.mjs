@@ -11,6 +11,7 @@ import { adminAuth, scopeClient } from "./middleware.mjs";
 import { registerAdminRoutes } from "./routes/admin.mjs";
 import { registerPortalRoutes } from "./routes/portal.mjs";
 import { registerWebhookRoutes } from "./routes/webhook.mjs";
+import { registerBillingRoutes } from "./routes/billing.mjs";
 import { startSchedulers } from "../jobs/schedulers.mjs";
 
 export function createApp() {
@@ -49,6 +50,7 @@ export function createApp() {
   registerAdminRoutes(app);
   registerPortalRoutes(app);
   registerWebhookRoutes(app);
+  registerBillingRoutes(app);
 
   return app;
 }

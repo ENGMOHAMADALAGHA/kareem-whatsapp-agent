@@ -137,20 +137,22 @@ export function registerAdminRoutes(app) {
     const order = await getPublicOrder(req.params.orderId);
     if (!order) return res.status(404).send("الطلب غير موجود");
     if (req.query.paid === "1") {
-      await markOrderPaid(order.id, order.tenantId);
-      logEvent("order_paid", { tenantId: order.tenantId, phone: order.phone, orderId: order.id, total: order.total }).catch(() => {});
-      // طلب تقييم تلقائي بعد الدفع
-      const tenant = await getTenantFull(order.tenantId);
-      if (tenant) {
-        const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
-        await requestCsat(order.tenantId, order.phone, order.id);
+      // وضع Stripe الحقيقي: لا نثق بالرابط وحده — نتحقق من الجلسة عبر API
+      if (process.env.STRIPE_SECRET_KEY && order.stripeSessionId) {
         try {
-          await sendWhatsAppMessage(order.phone, msg, tenant);
-          await pushHistory(order.phone, "assistant", msg, tenant);
+          const sres = await fetch(`https://api.stripe.com/v1/checkout/sessions/${order.stripeSessionId}`, {
+            headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
+          });
+          const sess = await sres.json();
+          if (sess.payment_status !== "paid") {
+            return res.send(`<h2>الدفع غير مكتمل ⏳ ${order.id}</h2><p>لم يصلنا تأكيد الدفع بعد. أكمل الدفع ثم حدّث الصفحة.</p>`);
+          }
         } catch (e) {
-          console.error(`  ❌ فشل إرسال CSAT: ${e.message}`);
+          return res.status(502).send("تعذر التحقق من الدفع، حاول لاحقاً.");
         }
       }
+      const { finalizePaidOrder } = await import("./billing.mjs");
+      await finalizePaidOrder(order.id, "pay-page");
       return res.send(`<h2>تم الدفع ✅ ${order.id} - $${order.total}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
     }
     res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);

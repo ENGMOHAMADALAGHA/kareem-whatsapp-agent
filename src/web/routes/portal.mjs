@@ -1,12 +1,19 @@
 import { getTenantFull } from "../../../tenants.mjs";
 import { verifyClientUser, signClientToken, startPasswordReset, finishPasswordReset } from "../../../portal.mjs";
 import { sendWhatsAppMessage } from "../../whatsapp/sender.mjs";
+import { checkLimit, loginKey } from "../../security/rateLimit.mjs";
 
 export function registerPortalRoutes(app) {
   app.post("/portal/login", async (req, res) => {
     try {
       const { verifyClientUser, signClientToken } = await import("../../../portal.mjs");
       const { tenantId, phone, password } = req.body || {};
+      // حماية تخمين: 5 محاولات/دقيقة لكل حساب
+      const ip = req.ip || req.socket?.remoteAddress || "unknown";
+      const lim = checkLimit(loginKey(tenantId, phone, ip), 5, 60 * 1000);
+      if (!lim.allowed) {
+        return res.status(429).json({ ok: false, error: `محاولات كثيرة — حاول بعد ${lim.retryAfter} ثانية` });
+      }
       const u = await verifyClientUser(tenantId, phone, password);
       if (!u) return res.status(401).json({ ok: false, error: "بيانات الدخول غير صحيحة" });
       if (u.disabled) return res.status(403).json({ ok: false, error: "هذا البوت موقوف — تواصل مع الإدارة" });

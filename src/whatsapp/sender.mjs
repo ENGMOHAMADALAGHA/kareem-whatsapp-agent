@@ -4,6 +4,17 @@
 // ──────────────────────────────────────────────
 import { resolveTenantInput } from "../../tenants.mjs";
 import { WHATSAPP_TOKEN, WHATSAPP_PHONE_ID } from "../config/env.mjs";
+import { checkLimit, tenantSendKey } from "../security/rateLimit.mjs";
+
+// حد الإرسال لكل بوت: 60 رسالة/دقيقة (حماية من حظر Meta)
+async function guardSend(tenant, phoneId) {
+  const lim = checkLimit(tenantSendKey(tenant?.id || phoneId || "default"), 60, 60 * 1000);
+  if (!lim.allowed) {
+    const e = new Error(`تجاوز حد الإرسال — أعد المحاولة بعد ${lim.retryAfter}ث`);
+    e.code = "RATE_LIMITED";
+    throw e;
+  }
+}
 
 async function creds(tenantInput) {
   const tenant = await resolveTenantInput(tenantInput);
@@ -19,7 +30,8 @@ function isDemo(token, phoneId) {
 }
 
 export async function sendWhatsAppMessage(to, text, tenantInput = null) {
-  const { token, phoneId } = await creds(tenantInput);
+  const { tenant, token, phoneId } = await creds(tenantInput);
+  await guardSend(tenant, phoneId);
 
   if (isDemo(token, phoneId)) {
     console.log(`  📤 [محاكاة إرسال] إلى ${to}: "${text}"`);
@@ -61,7 +73,8 @@ export async function sendWhatsAppMessage(to, text, tenantInput = null) {
 
 // إرسال generic (نص / أزرار / صورة) - نفس التوكن لكل بوت
 async function sendPayload(to, payload, tenantInput = null) {
-  const { token, phoneId } = await creds(tenantInput);
+  const { tenant, token, phoneId } = await creds(tenantInput);
+  await guardSend(tenant, phoneId);
 
   if (isDemo(token, phoneId)) {
     console.log(`  📤 [محاكاة إرسال ${payload.type}] إلى ${to}: ${JSON.stringify(payload).slice(0, 200)}`);

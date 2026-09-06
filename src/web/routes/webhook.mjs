@@ -50,6 +50,7 @@ import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
 import { updateTenant } from "../../../tenants.mjs";
 import { webhookQueue } from "../../jobs/queue.mjs";
+import { checkLimit, senderKey } from "../../security/rateLimit.mjs";
 import { createClientUser, listClientUsers } from "../../../portal.mjs";
 
 import { verifyMetaSignature } from "../middleware.mjs";
@@ -122,6 +123,12 @@ async function processWebhookBody(body) {
 
           // استخراج رقم العميل ونص الرسالة (يدعم الأزرار + الفويس)
           const from = msg.from; // رقم العميل
+          // حد المعدل: 30 رسالة/دقيقة لكل رقم (حماية من الحلقات وتكلفة AI)
+          const rl = checkLimit(senderKey(from), 30, 60 * 1000);
+          if (!rl.allowed) {
+            console.warn(`  ⏱️ تجاوز الحد من ${from} — تم التجاهل (${rl.retryAfter}ث)`);
+            continue;
+          }
           let text =
             msg.text?.body ||
             msg.button?.text ||
