@@ -378,14 +378,136 @@ let lastSeen = 0;
 const isPortal = location.pathname.startsWith("/portal");
 let portalToken = localStorage.getItem("portalToken") || "";
 
-async function api(path, opts) {
+async function api(path, opts, timeoutMs) {
   opts = opts || {};
   opts.headers = opts.headers || {};
   if (isPortal && portalToken) opts.headers["Authorization"] = "Bearer " + portalToken;
-  const r = await fetch(path, opts);
-  if (r.status === 401 && isPortal) { showLogin(); throw new Error("login"); }
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return r.json();
+  // مهلة صريحة: طلب معلّق لا يجوز أن يجمّد الواجهة أو يتراكم مع التحديث الدوري
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs || 25000);
+  try {
+    const r = await fetch(path, { ...opts, signal: ctrl.signal });
+    if (r.status === 401 && isPortal) { showLogin(); throw new Error("login"); }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("timeout");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── تنبيهات غير حاجبة (بدل alert المجمد لخيط الواجهة) ──
+function toast(msg, kind) {
+  let box = $("toastBox");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toastBox";
+    box.style.cssText = "position:fixed;bottom:1rem;inset-inline:0;display:flex;flex-direction:column;align-items:center;gap:.4rem;z-index:100;pointer-events:none";
+    document.body.appendChild(box);
+  }
+  const el = document.createElement("div");
+    const colors = { success: "#059669", error: "#dc2626", info: "#2563eb" };
+  el.style.cssText = "background:" + (colors[kind] || colors.info) + ";color:#fff;font-size:.8rem;font-weight:700;padding:.55rem 1.1rem;border-radius:.8rem;box-shadow:0 10px 25px -8px rgba(0,0,0,.4);animation:slideIn .2s ease;max-width:90vw";
+  el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 320); }, 3200);
+}
+
+// ── تأكيد غير حاجب (بدل confirm/prompt المجمدين) — يرجع Promise<boolean> ──
+function confirmDialog(title, msg, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "glass-overlay";
+    const card = document.createElement("div");
+    card.className = "wizard-card p-5";
+    card.style.width = "22rem";
+    card.setAttribute("dir", "rtl");
+    const h = document.createElement("h3");
+    h.className = "font-bold text-base mb-1";
+    h.textContent = title;
+    const p = document.createElement("p");
+    p.className = "text-sm text-slate-600 mb-2";
+    p.textContent = msg;
+    card.append(h, p);
+    let input = null;
+    if (opts.requireText) {
+      input = document.createElement("input");
+      input.className = "field mb-2";
+      input.placeholder = opts.requireText;
+      input.dir = "ltr";
+      card.appendChild(input);
+    }
+    const row = document.createElement("div");
+    row.className = "flex gap-2";
+    const ok = document.createElement("button");
+    ok.className = "flex-1 py-2 rounded-lg text-white font-bold";
+    ok.style.background = opts.danger ? "linear-gradient(135deg,#dc2626,#7f1d1d)" : "linear-gradient(135deg,#2563eb,#1e40af)";
+    ok.textContent = opts.okLabel || "تأكيد";
+    const no = document.createElement("button");
+    no.className = "flex-1 py-2 rounded-lg bg-slate-200 font-bold";
+    no.textContent = "إلغاء";
+    const done = (v) => { ov.remove(); resolve(v); };
+    ok.onclick = () => {
+      if (opts.requireText && input && input.value.trim() !== opts.requireText) {
+        toast("النص غير متطابق — أُلغي الإجراء", "error");
+        return done(false);
+      }
+      done(true);
+    };
+    no.onclick = () => done(false);
+    ov.onclick = (e) => { if (e.target === ov) done(false); };
+    row.append(ok, no);
+    card.appendChild(row);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    if (input) input.focus();
+  });
+}
+
+// ── إدخال غير حاجب (بدل prompt المجمد) — يرجع string أو null عند الإلغاء ──
+function promptDialog(title, msg, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "glass-overlay";
+    const card = document.createElement("div");
+    card.className = "wizard-card p-5";
+    card.style.width = "22rem";
+    card.setAttribute("dir", "rtl");
+    const h = document.createElement("h3");
+    h.className = "font-bold text-base mb-1";
+    h.textContent = title;
+    const p = document.createElement("p");
+    p.className = "text-sm text-slate-600 mb-2";
+    p.textContent = msg;
+    const input = document.createElement("input");
+    input.className = "field mb-2";
+    input.placeholder = opts.placeholder || "";
+    if (opts.password) input.type = "password";
+    else input.dir = "ltr";
+    const row = document.createElement("div");
+    row.className = "flex gap-2";
+    const ok = document.createElement("button");
+    ok.className = "flex-1 py-2 rounded-lg text-white font-bold";
+    ok.style.background = "linear-gradient(135deg,#2563eb,#1e40af)";
+    ok.textContent = "متابعة";
+    const no = document.createElement("button");
+    no.className = "flex-1 py-2 rounded-lg bg-slate-200 font-bold";
+    no.textContent = "إلغاء";
+    const done = (v) => { ov.remove(); resolve(v); };
+    ok.onclick = () => done(input.value.trim() || null);
+    no.onclick = () => done(null);
+    input.onkeydown = (e) => { if (e.key === "Enter") ok.click(); };
+    ov.onclick = (e) => { if (e.target === ov) done(null); };
+    row.append(ok, no);
+    card.append(h, p, input, row);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    input.focus();
+  });
 }
 
 function showLogin() {
@@ -417,9 +539,9 @@ function showLogin() {
     const tenantId = $("liTenant").value.trim(), phone = $("liPhone").value.trim();
     if (!tenantId || !phone) { $("liMsg").textContent = "أدخل معرف البوت ورقم الجوال أولاً"; return; }
     await fetch("/portal/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone }) });
-    const code = prompt("أرسلنا رمزاً لواتساب " + phone + " — أدخله هنا:");
+    const code = await promptDialog("إعادة التعيين", "أرسلنا رمزاً لواتساب " + phone + " — أدخله هنا:", { placeholder: "الرمز" });
     if (!code) return;
-    const np = prompt("كلمة السر الجديدة (6 أحرف على الأقل):");
+    const np = await promptDialog("كلمة جديدة", "كلمة السر الجديدة (6 أحرف على الأقل):", { placeholder: "كلمة السر", password: true });
     if (!np) return;
     const j = await (await fetch("/portal/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone, code, newPassword: np }) })).json();
     $("liMsg").textContent = j.ok ? "تم ✅ سجل دخولك الآن" : j.error;
@@ -511,7 +633,7 @@ async function loadConv() {
 
 async function sendReply() {
   const t = $("replyInput").value.trim();
-  if (!t || !cur.phone) return alert("اختر محادثة أولاً");
+  if (!t || !cur.phone) { toast("اختر محادثة أولاً", "error"); return; }
   await api("/admin/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone: cur.phone, text: t }) });
   $("replyInput").value = "";
   loadConv();
@@ -539,9 +661,13 @@ async function loadOrders() {
 }
 
 async function confirmOrder(id) {
-  if (!confirm("تأكيد استلام الدفع للطلب " + id + "؟")) return;
-  await api("/admin/orders/" + id + "/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
-  loadOrders();
+  const ok = await confirmDialog("تأكيد الدفع", "تأكيد استلام الدفع للطلب " + id + "؟", { okLabel: "✔ تأكيد الاستلام" });
+  if (!ok) return;
+  try {
+    await api("/admin/orders/" + id + "/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+    toast("تم تأكيد الدفع ✅", "success");
+    loadOrders();
+  } catch (e) { toast("فشل التأكيد: " + e.message, "error"); }
 }
 
 async function loadBooking() {
@@ -565,8 +691,13 @@ async function loadBooking() {
 }
 
 async function cancelBk(id) {
-  await fetch("/admin/appointments/" + id + "/cancel", { method: "POST" });
-  loadBooking();
+  const ok = await confirmDialog("إلغاء الحجز", "إلغاء الحجز " + id + "؟ سيُعرض الموعد على قائمة الانتظار.", { danger: true, okLabel: "إلغاء الحجز" });
+  if (!ok) return;
+  try {
+    await api("/admin/appointments/" + id + "/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+    toast("تم إلغاء الحجز", "info");
+    loadBooking();
+  } catch (e) { toast("فشل الإلغاء: " + e.message, "error"); }
 }
 
 async function loadCsat() {
@@ -659,21 +790,29 @@ document.querySelectorAll(".side-nav").forEach((b) => {
 $("replyBtn").onclick = sendReply;
 $("replyInput").onkeydown = (e) => { if (e.key === "Enter") sendReply(); };
 $("remindBtn").onclick = async () => {
-  const j = await api("/admin/remind-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-  alert("تم: " + JSON.stringify(j.sent));
-  loadBooking();
+  toast("جاري تشغيل التذكير...", "info");
+  try {
+    const j = await api("/admin/remind-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    toast("تم التذكير: " + (j.sent || []).length + " موعد", "success");
+    loadBooking();
+  } catch (e) { toast("فشل التذكير: " + e.message, "error"); }
 };
 $("bcBtn").onclick = async () => {
   const phones = $("bcPhones").value.split(",").map((s) => s.trim()).filter(Boolean);
-  const j = await api("/admin/broadcast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, text: $("bcText").value, phones }) });
-  alert(j.ok ? "تم البث" : j.error);
-  loadBc();
+  toast("جاري إرسال البث...", "info");
+  try {
+    const j = await api("/admin/broadcast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, text: $("bcText").value, phones }) });
+    toast(j.ok ? ("تم البث ✅" + (j.skippedOptOut ? " (مستبعد: " + j.skippedOptOut + ")" : "")) : ("فشل: " + j.error), j.ok ? "success" : "error");
+    loadBc();
+  } catch (e) { toast("فشل البث: " + e.message, "error"); }
 };
 
 // ── وحدة تحكم البوتات (Enterprise Console) ──
 let editingBotId = null;
 let wizStep = 0;
 let botsCache = [];
+let kpiCache = { at: 0, review: null };
+const KPI_TTL_MS = 90000; // عدّادات المراجعة تُحدّث كل 90 ثانية كحد أقصى
 const BIZ_ICON = { dental: "🦷", "sport-store": "👟", retail: "🏪", beauty: "💅", restaurant: "🍔", general: "📦" };
 const PLAN_AR = { trial: "تجريبي", basic: "أساسي", clinic: "عيادات", pro: "احترافي" };
 
@@ -686,17 +825,21 @@ function botStatus(t) {
 async function loadBots() {
   if (isPortal) return;
   const box = $("botsList");
-  box.innerHTML = "";
-  for (let i = 0; i < 3; i++) {
-    const s = document.createElement("div");
-    s.className = "skeleton";
-    box.appendChild(s);
+  // هيكل عظمي للرسم الأول فقط — التحديثات اللاحقة لا تمسح الشبكة (بلا وميض/تعليق)
+  const firstPaint = !box.hasChildNodes();
+  if (firstPaint) {
+    box.innerHTML = "";
+    for (let i = 0; i < 3; i++) {
+      const s = document.createElement("div");
+      s.className = "skeleton";
+      box.appendChild(s);
+    }
   }
   let tenants = [];
   try {
     const j = await api("/admin/tenants");
     tenants = j.tenants || [];
-  } catch (e) { box.innerHTML = ""; return; }
+  } catch (e) { if (firstPaint) box.innerHTML = ""; return; }
   botsCache = tenants;
   renderKpis(tenants);
   applyBotFilter();
@@ -711,15 +854,23 @@ async function renderKpis(tenants) {
   $("kpiSuspended").textContent = suspended;
   $("kpiPlans").textContent = paid;
   $("kpiReview").textContent = "…";
-  // قيد المراجعة: مجموع الطلبات pending_review عبر البوتات (أفضل-جهد، متوازٍ)
+  // كاش قصير: عدّادات المراجعة لا تُجلب من الشبكة مع كل تحديث
+  const now = Date.now();
+  if (now - kpiCache.at < KPI_TTL_MS && kpiCache.review !== null) {
+    $("kpiReview").textContent = kpiCache.review;
+    return;
+  }
+  // ملخص عددي خفيف (تجميع واحد لكل بوت) بدل سحب مئات الطلبات
   try {
     const counts = await Promise.all(tenants.map(async (t) => {
       try {
-        const o = await api("/admin/orders?tenant=" + encodeURIComponent(t.id));
-        return (o.orders || []).filter((x) => x.status === "pending_review").length;
+        const s = await api("/admin/orders/summary?tenant=" + encodeURIComponent(t.id), null, 15000);
+        return (s.byStatus && s.byStatus.pending_review) || 0;
       } catch (e) { return 0; }
     }));
-    $("kpiReview").textContent = counts.reduce((a, b) => a + b, 0);
+    const total = counts.reduce((a, b) => a + b, 0);
+    kpiCache = { at: now, review: total };
+    $("kpiReview").textContent = total;
   } catch (e) { $("kpiReview").textContent = "—"; }
 }
 
@@ -937,33 +1088,69 @@ async function saveBot() {
   const body = collectBotForm();
   if (!editingBotId && !body.id) { $("botMsg").textContent = "المعرف مطلوب"; return; }
   if (!body.name || !body.botName) { $("botMsg").textContent = "اسم النشاط واسم البوت مطلوبان"; return; }
+  // حفظ متفائل: أغلق المعالج فوراً وأعلم المستخدم — التحديث يتم بالخلفية
+  const isEdit = !!editingBotId;
+  const savedId = editingBotId || body.id;
+  closeBotModal();
+  toast(isEdit ? "جاري حفظ التعديلات..." : "جاري إنشاء البوت...", "info");
   try {
-    if (editingBotId) {
+    if (isEdit) {
       await api("/admin/tenants/" + encodeURIComponent(editingBotId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     } else {
       await api("/admin/tenants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     }
-    closeBotModal();
+    toast(isEdit ? "تم حفظ البوت ✅" : "تم إنشاء البوت ✅", "success");
     await loadTenants(); // يظهر البوت فوراً في المحدد
     loadBots();
-  } catch (e) { $("botMsg").textContent = "خطأ: " + e.message; }
+  } catch (e) {
+    toast("فشل الحفظ: " + e.message, "error");
+    // أعد فتح المعالج على نفس البيانات لتصحيح الخطأ (بدون إعادة جلب تمسح التعديلات)
+    refillBotForm(body, isEdit ? savedId : null);
+  }
+}
+
+// تعبئة المعالج من كائن جاهز (تُستخدم عند فشل الحفظ للحفاظ على مدخلات المستخدم)
+function refillBotForm(b, id) {
+  editingBotId = id;
+  $("botModalTitle").textContent = id ? "✏ تعديل بوت" : "＋ معالج تأهيل بوت جديد";
+  fillBotForm(null);
+  $("botId").value = id || b.id || "";
+  $("botId").disabled = !!id;
+  $("botNameFull").value = b.name || "";
+  $("botBotName").value = b.botName || "";
+  $("botBiz").value = b.businessType || "general";
+  $("botPhoneId").value = b.phoneNumberId || "";
+  $("botVerify").value = b.verifyToken || "";
+  $("botCliqNum").value = b.features?.cliq?.number || "";
+  $("botCliqName").value = b.features?.cliq?.name || "";
+  $("botWallets").value = (b.features?.paymentWallets || []).map((w) => [w.type, w.number, w.name || ""].filter(Boolean).join(" | ")).join("\n");
+  $("botPlan").value = b.plan || "trial";
+  $("botTrial").value = b.trialEndsAt || "";
+  $("botEnabled").checked = b.enabled !== false;
+  wizShow(0);
+  $("botModal").classList.remove("hidden");
+  $("botModal").style.display = "flex";
 }
 
 async function toggleBot(id, enable) {
-  if (!confirm((enable ? "تفعيل" : "إيقاف") + " البوت " + id + "؟")) return;
-  await api("/admin/tenants/" + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enable }) });
-  loadBots();
+  const ok = await confirmDialog(enable ? "تفعيل البوت" : "إيقاف البوت", (enable ? "تفعيل" : "إيقاف") + " البوت " + id + "؟");
+  if (!ok) return;
+  try {
+    await api("/admin/tenants/" + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enable }) });
+    toast(enable ? "تم تفعيل البوت ✅" : "تم إيقاف البوت ⛔", enable ? "success" : "info");
+    loadBots();
+  } catch (e) { toast("فشلت العملية: " + e.message, "error"); }
 }
 
 async function deleteBot(id) {
-  if (!confirm("حذف البوت " + id + " نهائياً مع كل بياناته؟ لا يمكن التراجع!")) return;
-  const word = prompt("للتأكيد اكتب معرف البوت (" + id + "):");
-  if (word !== id) { alert("غير متطابق — أُلغي الحذف"); return; }
+  const ok = await confirmDialog("حذف نهائي", "حذف البوت " + id + " مع كل بياناته؟ لا يمكن التراجع! للتأكيد اكتب معرف البوت أدناه.", { danger: true, okLabel: "حذف نهائي", requireText: id });
+  if (!ok) return;
   try {
     await api("/admin/tenants/" + encodeURIComponent(id), { method: "DELETE" });
+    toast("تم حذف البوت 🗑", "info");
     await loadTenants();
     loadBots();
-  } catch (e) { alert("فشل الحذف: " + e.message); }
+  } catch (e) { toast("فشل الحذف: " + e.message, "error"); }
 }
 
 $("newBotBtn").onclick = () => openBotModal(null);
@@ -986,7 +1173,18 @@ $("botSearch").oninput = applyBotFilter;
   await loadTenants();
   switchTab("inbox");
   refreshAll();
-  setInterval(() => { loadInbox(); if (cur.phone) loadConv(); }, 4000);
+  // تحديث دوري محمي: لا تداخل طلبات، ويتوقف عندما الصفحة مخفية
+  let pollBusy = false;
+  setInterval(async () => {
+    if (document.hidden || pollBusy) return;
+    pollBusy = true;
+    try {
+      await loadInbox();
+      if (cur.phone) await loadConv();
+    } catch (e) { /* دورة قادمة تعوّض */ } finally {
+      pollBusy = false;
+    }
+  }, 4000);
 })();
 </script>
 </body>

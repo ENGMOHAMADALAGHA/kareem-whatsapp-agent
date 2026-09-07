@@ -151,6 +151,21 @@ export function registerAdminRoutes(app) {
     const _or = scope.global ? await listOrdersAll() : await listOrders(scope.tenant);
     res.json({ count: _or.length, orders: _or });
   });
+  // ملخص عددي خفيف للطلبات (للكواجهات KPI — تجميع واحد بدل سحب 500 صف)
+  app.get("/admin/orders/summary", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const { tenantDb, systemDb } = await import("../../security/tenantGuard.mjs");
+    const T = scope.global ? systemDb("orders:summary") : tenantDb(scope.tenant);
+    const groups = await T.order.groupBy({ by: ["status"], _count: { _all: true } });
+    const byStatus = {};
+    let total = 0;
+    for (const g of groups) {
+      byStatus[g.status] = g._count._all;
+      total += g._count._all;
+    }
+    res.json({ ok: true, tenant: scope.global ? "all" : scope.tenant, total, byStatus });
+  });
   // تأكيد دفع يدوي (موظف تحقق من المحفظة) + إشعار الزبون
   app.post("/admin/orders/:id/confirm", async (req, res) => {
     const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
