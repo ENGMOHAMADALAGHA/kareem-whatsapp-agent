@@ -41,7 +41,10 @@ export const adminAuth = async (req, res, next) => {
       return next();
     }
   }
-  res.setHeader("WWW-Authenticate", 'Basic realm="admin"');
+  // نافذة الدخول الأصلية للمتصفح تُعرض فقط لصفحة HTML نفسها —
+  // أما API (JSON) فيرجع 401 بدون WWW-Authenticate حتى لا تطلق هواتف iOS
+  // نافذة نظام مع كل طلب خلفية (تُرى كحلقة "إلغاء لا يذهب").
+  if (req.path === "/") res.setHeader("WWW-Authenticate", 'Basic realm="admin"');
   return res.status(401).json({ ok: false, error: "مطلوب تسجيل دخول المدير" });
 };
 // ── تحقق توقيع Meta (X-Hub-Signature-256) لمنع حقن Webhooks مزيفة ──
