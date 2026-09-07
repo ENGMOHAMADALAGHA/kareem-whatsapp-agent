@@ -332,7 +332,7 @@
         <input id="botPhoneId" class="field" placeholder="WhatsApp Phone ID" dir="ltr">
         <input id="botVerify" class="field" placeholder="Verify Token" dir="ltr">
         <input id="botToken" type="password" class="field" placeholder="WhatsApp Token الخاص" dir="ltr">
-        <p class="text-xs text-slate-500">💡 اترك الحقول فارغة لاستخدام إعدادات السيرفر المشتركة. التوكن يُشفّر بـ AES-GCM ولا يظهر مجدداً.</p>
+        <p class="text-xs text-slate-500">💡 اترك الحقول فارغة لاستخدام إعدادات السيرفر المشتركة. التوكن يُشفّر بـ AES-GCM ولا يظهر مجدداً.<br>📱 نفس رقم العميل يبقى على تطبيق واتساب بزنس (وضع Coexistence) — التفاصيل بزر 🔗 ربط بعد الإنشاء.</p>
       </div>
       <!-- Step 3: payments -->
       <div class="wiz-pane space-y-2 hidden" data-pane="2">
@@ -363,6 +363,36 @@
         <button id="botNext" class="flex-1 py-2 rounded-lg text-white font-bold" style="background:linear-gradient(135deg,#2563eb,#1e40af)">التالي</button>
         <button id="botSave" class="flex-1 py-2 rounded-lg text-white font-bold hidden" style="background:linear-gradient(135deg,#059669,#065f46)">✓ إنشاء البوت</button>
         <button id="botCancel" class="px-4 py-2 rounded-lg bg-slate-100 font-bold">✕</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- نافذة ربط العميل: فحص الربط + دليل Coexistence + دعوة واتساب -->
+  <div id="linkModal" class="hidden glass-overlay" style="display:none">
+    <div class="wizard-card p-5" dir="rtl">
+      <h2 class="font-bold text-lg mb-1">🔗 ربط العميل — <span id="linkBotName"></span></h2>
+      <p class="text-xs text-slate-500 mb-3">نفس رقم الواتساب يبقى على تطبيق العميل ويتربط بالمنصة (وضع Coexistence).</p>
+      <div class="flex items-center gap-2 mb-2">
+        <button id="linkTestBtn" class="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-sm font-bold">📡 فحص الربط الحي</button>
+        <span id="linkStatus" class="text-xs text-slate-500">لم يُفحص بعد</span>
+      </div>
+      <ol class="text-xs text-slate-600 space-y-1 mb-3 list-decimal pr-4">
+        <li>العميل يُبقي رقم <b>واتساب بزنس</b> على هاتفه (لا يحذف شيئاً).</li>
+        <li>يربط الرقم عبر Meta (Coexistence) ويعطيك <b>Phone ID</b> و <b>Token</b>.</li>
+        <li>الصقهما من زر ✏ تعديل ثم اضغط فحص الربط الحي هنا.</li>
+        <li>أنشئ دعوة بالأسفل — العميل يستلم رابط + كلمة مؤقتة واتساب.</li>
+      </ol>
+      <div class="border-t pt-2 space-y-2">
+        <div class="font-bold text-sm">✉ دعوة بوابة العميل</div>
+        <div class="flex gap-2">
+          <input id="linkName" class="field flex-1" placeholder="اسم العميل (العيادة)">
+          <input id="linkPhone" class="field flex-1" placeholder="جوال العميل" dir="ltr">
+        </div>
+        <button id="linkInviteBtn" class="w-full py-2 rounded-lg text-white font-bold" style="background:linear-gradient(135deg,#059669,#065f46)">إنشاء + إرسال الدعوة واتساب</button>
+        <div id="linkResult" class="text-xs bg-slate-50 border rounded-lg p-2 space-y-0.5 hidden"></div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button id="linkClose" class="flex-1 py-2 rounded-lg bg-slate-200 font-bold">إغلاق</button>
       </div>
     </div>
   </div>
@@ -525,6 +555,11 @@ function showLogin() {
     "<button id='liForgot' class='w-full text-xs text-blue-600'>نسيت كلمة السر؟</button>" +
     "<div id='liMsg' class='text-xs text-red-500'></div></div>";
   document.body.appendChild(ov);
+  try {
+    const q = new URLSearchParams(location.search);
+    const pre = q.get("tenant");
+    if (pre) $("liTenant").value = pre;
+  } catch (e) { /* تجاهل */ }
   $("liGo").onclick = async () => {
     try {
       const j = await (await fetch("/portal/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: $("liTenant").value.trim(), phone: $("liPhone").value.trim(), password: $("liPass").value }) })).json();
@@ -948,6 +983,7 @@ function botCard(t, i) {
   };
   bar.appendChild(mk(st === "off" ? "▶ تفعيل" : "⏸ إيقاف", "bg-amber-100", () => toggleBot(t.id, st === "off")));
   bar.appendChild(mk("✏ تعديل", "bg-slate-100", () => openBotModal(t.id)));
+  bar.appendChild(mk("🔗 ربط", "bg-emerald-100", () => openLinkModal(t.id)));
   bar.appendChild(mk("📥 المحادثات", "bg-blue-100", () => jumpToTenantInbox(t.id)));
   bar.appendChild(mk("🗑 حذف", "bg-red-100", () => deleteBot(t.id)));
   card.appendChild(bar);
@@ -1156,6 +1192,90 @@ async function deleteBot(id) {
 $("newBotBtn").onclick = () => openBotModal(null);
 $("botCancel").onclick = closeBotModal;
 $("botSave").onclick = saveBot;
+
+// ── ربط العميل: فحص حي + دعوة بوابة ──
+let linkTenantId = null;
+
+async function openLinkModal(id) {
+  linkTenantId = id;
+  const t = botsCache.find((x) => x.id === id);
+  $("linkBotName").textContent = t ? (t.botName + " (" + t.id + ")") : id;
+  $("linkStatus").textContent = "لم يُفحص بعد";
+  $("linkStatus").className = "text-xs text-slate-500";
+  $("linkResult").classList.add("hidden");
+  $("linkResult").innerHTML = "";
+  $("linkModal").classList.remove("hidden");
+  $("linkModal").style.display = "flex";
+}
+function closeLinkModal() {
+  $("linkModal").classList.add("hidden");
+  $("linkModal").style.display = "none";
+  linkTenantId = null;
+}
+
+async function testLink() {
+  if (!linkTenantId) return;
+  $("linkStatus").textContent = "جاري الفحص...";
+  try {
+    const j = await api("/admin/tenants/" + encodeURIComponent(linkTenantId) + "/test-link", { method: "POST" });
+    if (j.linked) {
+      $("linkStatus").textContent = "✅ مربوط وشغال" + (j.number ? " (" + j.number + ")" : "");
+      $("linkStatus").className = "text-xs font-bold text-green-700";
+      toast("الربط شغال ✅", "success");
+    } else {
+      $("linkStatus").textContent = "❌ " + (j.reason || "غير مربوط");
+      $("linkStatus").className = "text-xs font-bold text-red-600";
+    }
+  } catch (e) {
+    $("linkStatus").textContent = "❌ تعذر الفحص: " + e.message;
+    $("linkStatus").className = "text-xs font-bold text-red-600";
+  }
+}
+
+async function sendInvite() {
+  if (!linkTenantId) return;
+  const name = $("linkName").value.trim();
+  const phone = $("linkPhone").value.trim();
+  if (!phone) { toast("أدخل جوال العميل", "error"); return; }
+  toast("جاري إنشاء الدعوة...", "info");
+  try {
+    const j = await api("/admin/invites", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: linkTenantId, name, phone, send: true }),
+    });
+    const inv = j.invite;
+    const box = $("linkResult");
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+    const lines = [
+      "✅ تمت الدعوة" + (inv.sent ? " وأُرسلت واتساب" : " (تعذر الإرسال: " + (inv.sendError || "?") + ")"),
+      "🔗 " + inv.portalUrl,
+      "🤖 البوت: " + inv.tenantId,
+      "📱 الجوال: " + inv.phone,
+      "🔑 المؤقتة: " + inv.tempPassword,
+    ];
+    lines.forEach((l) => {
+      const d = document.createElement("div");
+      d.textContent = l;
+      box.appendChild(d);
+    });
+    const cp = document.createElement("button");
+    cp.className = "mt-1 px-2 py-1 rounded bg-slate-200 text-xs font-bold";
+    cp.textContent = "📋 نسخ بيانات الدخول";
+    cp.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText("رابط الدخول: " + inv.portalUrl + "\nالبوت: " + inv.tenantId + "\nالجوال: " + inv.phone + "\nكلمة مؤقتة: " + inv.tempPassword);
+        toast("تم النسخ ✅", "success");
+      } catch (e) { toast("تعذر النسخ", "error"); }
+    };
+    box.appendChild(cp);
+    toast(inv.sent ? "وصلت الدعوة واتساب ✅" : "أُنشئت الدعوة (راجع الإرسال)", inv.sent ? "success" : "info");
+  } catch (e) { toast("فشلت الدعوة: " + e.message, "error"); }
+}
+
+$("linkTestBtn").onclick = testLink;
+$("linkInviteBtn").onclick = sendInvite;
+$("linkClose").onclick = closeLinkModal;
 $("botNext").onclick = () => { if (wizValidate()) wizShow(wizStep + 1); };
 $("botBack").onclick = () => wizShow(wizStep - 1);
 $("botsRefresh").onclick = loadBots;
