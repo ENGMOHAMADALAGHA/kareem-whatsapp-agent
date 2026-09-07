@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "description": "AI Sales Agent على واتساب باسم كريم لمتجر مستلزمات رياضية",
   "type": "module",
-  "main": "agent.mjs",
+  "main": "electron/main.cjs",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "dev:ui": "node scripts/dev-ui.mjs",
+    "desktop": "electron .",
+    "dist": "electron-builder --win",
     "test": "node agent.mjs --test",
     "postinstall": "prisma generate",
     "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script"
@@ -20,6 +22,22 @@
   ],
   "author": "",
   "license": "MIT",
+  "build": {
+    "appId": "com.kareem.commandcenter",
+    "productName": "Kareem Command Center",
+    "files": [
+      "electron/**/*",
+      "server.mjs",
+      "agent.mjs",
+      "*.mjs",
+      "admin.html",
+      "prisma/**/*",
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": { "target": ["nsis"] }
+  },
   "dependencies": {
     "@google/genai": "^1.0.0",
     "@prisma/adapter-pg": "^7.10.0",
@@ -31,5 +49,8 @@
     "openai": "^4.104.0",
     "pg": "^8.23.0",
     "prisma": "^7.10.0"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0"
   }
 }

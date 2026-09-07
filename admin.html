@@ -116,17 +116,98 @@
     background-size: 200% 100%; animation: shimmer 1.2s infinite;
   }
   @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* ── Desktop console shell: left sidebar + workspace canvas ── */
+  .desk { display: flex; min-height: 100vh; direction: ltr; }
+  .side {
+    direction: rtl; width: 248px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column; gap: .25rem; padding: 1rem .8rem;
+    background: linear-gradient(180deg, #0b1220, #111c33);
+    color: #cbd5e1; border-inline-end: 1px solid rgba(255,255,255,.06);
+  }
+  .brand { display: flex; align-items: center; gap: .6rem; padding: .4rem .5rem 1rem; }
+  .brand-mark {
+    width: 2.6rem; height: 2.6rem; border-radius: .9rem; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
+    background: linear-gradient(135deg, #2563eb, #1e1b4b);
+    box-shadow: 0 6px 16px -4px rgba(37, 99, 235, .6);
+  }
+  .brand-name { font-weight: 800; color: #fff; font-size: 1.02rem; line-height: 1.2; }
+  .brand-sub { font-size: .68rem; color: #64748b; }
+  .side-label { font-size: .68rem; color: #64748b; padding: .6rem .6rem .2rem; letter-spacing: .02em; }
+  .side-nav {
+    display: flex; align-items: center; gap: .7rem; width: 100%;
+    padding: .62rem .8rem; border-radius: .75rem; font-size: .9rem; font-weight: 600;
+    color: #94a3b8; background: transparent; border: 1px solid transparent;
+    transition: all .16s ease; cursor: pointer; text-align: start;
+  }
+  .side-nav:hover { background: rgba(255,255,255,.06); color: #e2e8f0; }
+  .side-nav.side-active {
+    background: linear-gradient(135deg, rgba(37,99,235,.9), rgba(30,64,175,.9));
+    color: #fff; border-color: rgba(147,197,253,.35);
+    box-shadow: 0 8px 18px -6px rgba(37, 99, 235, .55);
+  }
+  .side-nav .nav-ico { font-size: 1.15rem; width: 1.6rem; text-align: center; flex-shrink: 0; }
+  .side-nav .nav-badge {
+    margin-inline-start: auto; font-size: .68rem; font-weight: 800;
+    background: #ef4444; color: #fff; border-radius: 999px; padding: .05rem .45rem;
+  }
+  .side-foot { margin-top: auto; padding: .8rem .6rem .2rem; border-top: 1px solid rgba(255,255,255,.08); font-size: .72rem; color: #64748b; }
+  .side-foot .live { color: #4ade80; font-weight: 700; }
+  .stage { direction: rtl; flex: 1; min-width: 0; padding: 1.2rem 1.4rem 3rem; max-width: 1400px; }
+  .topbar {
+    display: flex; align-items: center; gap: .8rem; margin-bottom: 1rem;
+    background: rgba(255,255,255,.75); backdrop-filter: blur(8px);
+    border: 1px solid #e2e8f0; border-radius: 1rem; padding: .7rem 1rem;
+    box-shadow: var(--saas-shadow); position: sticky; top: .8rem; z-index: 20;
+  }
+  .page-title { font-size: 1.25rem; font-weight: 800; }
+  .desk-chip {
+    font-size: .68rem; font-weight: 800; padding: .2rem .6rem; border-radius: 999px;
+    background: linear-gradient(135deg, #0ea5e9, #0369a1); color: #fff;
+  }
+  @media (max-width: 920px) {
+    .side { width: 78px; padding: 1rem .5rem; }
+    .side .nav-label, .side .brand-text, .side .side-label, .side-foot .foot-txt { display: none; }
+    .side-nav { justify-content: center; padding: .62rem .4rem; }
+    .side-nav .nav-badge { position: absolute; margin: 0; transform: translate(14px, -12px); }
+    .stage { padding: .9rem .8rem 3rem; }
+  }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
-<div class="max-w-6xl mx-auto p-4">
-  <div class="flex items-center gap-3 mb-4">
-    <h1 class="text-2xl font-bold">🤖 لوحة تحكم البوتات</h1>
-    <span id="liveDot" class="text-green-600 text-sm">● مباشر</span>
-    <select id="tenantSel" class="mr-auto border rounded p-2"></select>
-  </div>
+<div class="desk">
+  <aside class="side">
+    <div class="brand">
+      <div class="brand-mark">🤖</div>
+      <div class="brand-text">
+        <div class="brand-name">كريم</div>
+        <div class="brand-sub">Command Center</div>
+      </div>
+    </div>
+    <div class="side-label">العمليات</div>
+    <button class="side-nav" data-tab="inbox"><span class="nav-ico">📥</span><span class="nav-label">المحادثات</span><span class="nav-badge hidden" id="navInboxBadge"></span></button>
+    <button class="side-nav" data-tab="orders"><span class="nav-ico">🧾</span><span class="nav-label">الطلبات والفواتير</span></button>
+    <button class="side-nav" data-tab="booking"><span class="nav-ico">📅</span><span class="nav-label">الحجوزات</span></button>
+    <div class="side-label">التسويق والجودة</div>
+    <button class="side-nav" data-tab="send"><span class="nav-ico">📢</span><span class="nav-label">البث الجماعي</span></button>
+    <button class="side-nav" data-tab="csat"><span class="nav-ico">⭐</span><span class="nav-label">التقييمات</span></button>
+    <div class="side-label">الإدارة</div>
+    <button class="side-nav" data-tab="report"><span class="nav-ico">📊</span><span class="nav-label">نظرة عامة</span></button>
+    <button class="side-nav" data-tab="bots" id="botsNavBtn"><span class="nav-ico">🤖</span><span class="nav-label">البوتات</span></button>
+    <button class="side-nav" data-tab="crm"><span class="nav-ico">🧾</span><span class="nav-label">سجلات النظام</span></button>
+    <div class="side-foot">
+      <div><span id="liveDot" class="live">●</span> <span class="foot-txt">مباشر — v1.0</span></div>
+    </div>
+  </aside>
+  <main class="stage">
+    <header class="topbar">
+      <div class="page-title" id="pageTitle">المحادثات</div>
+      <span id="deskChip" class="desk-chip hidden">🖥 تطبيق سطح المكتب</span>
+      <select id="tenantSel" class="mr-auto border rounded-lg p-2 text-sm bg-white"></select>
+    </header>
 
-  <div class="flex gap-2 mb-4 flex-wrap" id="tabs">
+  <div class="hidden" id="tabs">
     <button data-tab="inbox" class="tab-btn active px-4 py-2 rounded bg-white shadow">📥 المحادثات</button>
     <button data-tab="orders" class="tab-btn px-4 py-2 rounded bg-white shadow">🧾 الطلبات</button>
     <button data-tab="booking" class="tab-btn px-4 py-2 rounded bg-white shadow">📅 الحجوزات</button>
@@ -285,6 +366,7 @@
       </div>
     </div>
   </div>
+  </main>
 </div>
 
 <script>
@@ -350,6 +432,8 @@ async function loadTenants() {
   if (isPortal) {
     const bb = $("botsTabBtn");
     if (bb) bb.style.display = "none";
+    const bn = $("botsNavBtn");
+    if (bn) bn.style.display = "none";
   }
   if (isPortal && portalToken) {
     try {
@@ -376,6 +460,11 @@ async function loadTenants() {
 async function loadInbox() {
   const j = await api("/admin/inbox?tenant=" + cur.tenant);
   $("inboxCount").textContent = "(" + j.count + ")";
+  const badge = $("navInboxBadge");
+  if (badge) {
+    if (j.count > 0) { badge.textContent = j.count > 99 ? "99+" : j.count; badge.classList.remove("hidden"); }
+    else badge.classList.add("hidden");
+  }
   const box = $("convList");
   box.innerHTML = "";
   j.inbox.forEach((c) => {
@@ -549,13 +638,22 @@ function refreshAll() {
   if (cur.phone) loadConv();
 }
 
+const PAGE_TITLES = { inbox: "المحادثات", orders: "الطلبات والفواتير", booking: "الحجوزات", csat: "التقييمات", send: "البث الجماعي", crm: "سجلات النظام", report: "نظرة عامة", bots: "إدارة البوتات" };
+
+function switchTab(name) {
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
+  ["inbox", "orders", "booking", "csat", "send", "crm", "report", "bots"].forEach((t) => $("tab-" + t).classList.add("hidden"));
+  $("tab-" + name).classList.remove("hidden");
+  document.querySelectorAll(".side-nav").forEach((x) => x.classList.toggle("side-active", x.dataset.tab === name));
+  $("pageTitle").textContent = PAGE_TITLES[name] || name;
+  cur.tab = name;
+}
+
 document.querySelectorAll("#tabs button").forEach((b) => {
-  b.onclick = () => {
-    document.querySelectorAll("#tabs button").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active");
-    ["inbox", "orders", "booking", "csat", "send", "crm", "report", "bots"].forEach((t) => $("tab-" + t).classList.add("hidden"));
-    $("tab-" + b.dataset.tab).classList.remove("hidden");
-  };
+  b.onclick = () => switchTab(b.dataset.tab);
+});
+document.querySelectorAll(".side-nav").forEach((b) => {
+  b.onclick = () => switchTab(b.dataset.tab);
 });
 
 $("replyBtn").onclick = sendReply;
@@ -876,7 +974,20 @@ $("botBack").onclick = () => wizShow(wizStep - 1);
 $("botsRefresh").onclick = loadBots;
 $("botSearch").oninput = applyBotFilter;
 
-(async () => { await loadTenants(); refreshAll(); setInterval(() => { loadInbox(); if (cur.phone) loadConv(); }, 4000); })();
+(async () => {
+  // وضع سطح المكتب: شارة مميزة (Electron preload أو ?desktop=1)
+  try {
+    const q = new URLSearchParams(location.search);
+    if ((window.desktop && window.desktop.isDesktop) || q.get("desktop") === "1") {
+      $("deskChip").classList.remove("hidden");
+      document.title = "Kareem Command Center — كريم";
+    }
+  } catch (e) { /* تجاهل */ }
+  await loadTenants();
+  switchTab("inbox");
+  refreshAll();
+  setInterval(() => { loadInbox(); if (cur.phone) loadConv(); }, 4000);
+})();
 </script>
 </body>
 </html>

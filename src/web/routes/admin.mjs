@@ -44,7 +44,7 @@ import {
   sendImage,
   defaultButtonsFor,
 } from "../../whatsapp/sender.mjs";
-import { getHistory, pushHistory } from "../../memory/conversations.mjs";
+import { getHistory, pushHistory, getMemoryStats } from "../../memory/conversations.mjs";
 import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox/service.mjs";
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
 import { updateTenant } from "../../../tenants.mjs";

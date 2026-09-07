@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-import { PORT, WEBHOOK_VERIFY_TOKEN, WHATSAPP_PHONE_ID, AI_PROVIDER, AI_MODEL } from "../config/env.mjs";
+import { PORT, WEBHOOK_VERIFY_TOKEN, WHATSAPP_PHONE_ID, AI_PROVIDER, AI_MODEL, ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
 import { listTenants } from "../../tenants.mjs";
 import { isDemoMode } from "../ai/kareem.mjs";
 import { adminAuth, scopeClient } from "./middleware.mjs";
@@ -67,6 +67,15 @@ export function startServer(port = PORT) {
     console.log(`  🔑 Verify Token: ${WEBHOOK_VERIFY_TOKEN}`);
     console.log(`  📱 Phone ID: ${WHATSAPP_PHONE_ID || "(غير مضبوط - وضع محاكاة)"}`);
     console.log(`  🧠 المزود: ${AI_PROVIDER} | النموذج: ${AI_MODEL} | الوضع: ${isDemoMode ? "DEMO" : "API حقيقي"}`);
+    // فحص الإعدادات الحرجة عند الإقلاع (لا فشل صامت — تحذير واضح)
+    if (!ADMIN_USER || !ADMIN_PASS) {
+      console.log("  ⚠️  ADMIN_USER/ADMIN_PASS غير مضبوطين — /admin سيرفض الدخول (503 fail-closed). أضفهما إلى .env");
+    } else {
+      console.log("  👤 دخول المدير: مفعّل (/admin يطلب Basic Auth)");
+    }
+    if (!META_APP_SECRET) {
+      console.log("  ⚠️  META_APP_SECRET غير مضبوط — webhooks الواردة ستُرفض (403 fail-closed)");
+    }
     console.log("═".repeat(60));
     console.log(`  💡 للاختبار المحلي: استخدم ngrok أو similar`);
     console.log(`     ngrok http ${port}`);

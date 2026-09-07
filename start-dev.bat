@@ -1,7 +1,8 @@
 @echo off
 REM ============================================================
-REM  One-Click Launcher (Windows) - whatsapp-ai-agent
-REM  Double-click this file: boots the server + opens Admin UI
+REM  One-Click Desktop Launcher (Windows) - Kareem Command Center
+REM  Double-click: boots the backend + opens the DESKTOP APP window
+REM  (no browser). For browser mode use: npm run dev:ui
 REM ============================================================
 cd /d "%~dp0"
 
@@ -25,6 +26,12 @@ if not exist "node_modules" (
   echo.
 )
 
-echo [INFO] Starting server + opening Admin UI...
-node scripts\dev-ui.mjs
+if not exist "node_modules\electron" (
+  echo [INFO] Electron missing - installing desktop shell...
+  call npm install --save-dev electron
+  echo.
+)
+
+echo [INFO] Launching Kareem Command Center (desktop app)...
+call npx electron .
 pause
