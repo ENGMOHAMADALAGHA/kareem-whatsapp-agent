@@ -27,6 +27,15 @@ export async function finalizePaidOrder(orderId, source = "manual") {
     tenantId: order.tenantId, phone: order.phone,
     orderId: order.id, total: order.total, source,
   }).catch(() => {});
+  // المالك يتفرج من واتسابه: إشعار فوري بالدفع المؤكد
+  try {
+    const { notifyOwner } = await import("../compliance/messaging.mjs");
+    notifyOwner(
+      await getTenantFull(order.tenantId),
+      "payment",
+      `💰 دفع مؤكد: طلب ${order.id} — $${order.total} من ${order.phone} (${source === "receipt-ai" ? "تحقق تلقائي" : "يدوي"})`
+    ).catch(() => {});
+  } catch { /* أفضل-جهد */ }
   const tenant = await getTenantFull(order.tenantId);
   if (tenant) {
     const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;

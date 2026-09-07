@@ -38,7 +38,22 @@ export function isOptIn(text) {
   return OPT_IN_RE.test(String(text || "").trim());
 }
 
-// ── تنبيه الموظف عند التصعيد للبشر (أفضل-جهد: لا يكسر التدفق) ──
+// ── تنبيه المالك واتساب: هل يريد إشعاراً لهذا النوع من الأحداث؟ ──
+// يُفعّل تلقائياً عند وجود رقم طاقم (staffPhone)، ويُطفأ لكل نوع عبر:
+// features.ownerAlerts = { booking: true/false, payment: true/false }
+export function ownerAlertsEnabled(tenant, kind) {
+  const to = tenant?.features?.staffPhone || STAFF_PHONE;
+  if (!to) return false;
+  const cfg = tenant?.features?.ownerAlerts;
+  if (cfg && cfg[kind] === false) return false;
+  return true;
+}
+
+// تنبيه المالك بحدث تشغيلي (حجز/دفع) — يحترم إعدادات ownerAlerts لكل نوع
+export async function notifyOwner(tenant, kind, text) {
+  if (!ownerAlertsEnabled(tenant, kind)) return { ok: false, reason: "disabled" };
+  return notifyStaff(tenant, text);
+}
 export async function notifyStaff(tenant, text) {
   const to = tenant?.features?.staffPhone || STAFF_PHONE;
   const full = `🔔 [${tenant?.botName || tenant?.id || "bot"}] ${text}`;

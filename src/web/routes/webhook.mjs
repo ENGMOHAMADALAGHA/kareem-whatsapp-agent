@@ -455,6 +455,8 @@ async function processWebhookBody(body) {
             } catch (e) {
               console.error(`  ❌ فشل الإرسال: ${e.message}`);
             }
+            const { notifyOwner } = await import("../../compliance/messaging.mjs");
+            notifyOwner(tenant, "booking", `📅 حجز من الانتظار: ${booking.service} — ${from} (${booking.id})`).catch(() => {});
             console.log(`  📋 تأكيد من الانتظار ${booking.id} ${from}`);
             console.log(`${"─".repeat(60)}\n`);
             continue;
@@ -538,6 +540,9 @@ async function processWebhookBody(body) {
               } catch (e) {
                 console.error(`  ❌ فشل الإرسال: ${e.message}`);
               }
+              // المالك يتفرج من واتسابه: إشعار فوري بالحجز الجديد
+              const { notifyOwner } = await import("../../compliance/messaging.mjs");
+              notifyOwner(tenant, "booking", `📅 حجز جديد: ${service} — ${from} (${name}) — الساعة ${slot} (${booking.id})`).catch(() => {});
               console.log(`  📅 تأكيد حجز ${booking.id} ${tenant.id} ${from} ${slot}`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
