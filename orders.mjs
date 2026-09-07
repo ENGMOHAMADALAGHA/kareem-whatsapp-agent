@@ -23,16 +23,15 @@ export async function getOrder(id, tenantId) {
   return rowToOrder(await tenantDb(tenantId).order.findUnique({ where: { id } }));
 }
 
-// صفحة الدفع العامة: تعرض الإجمالي فقط، لكن تُرجع tenantId/phone للمنطق الداخلي (لا تُعرض)
-// رابط الدفع capabilitiy-URL: الوصول بالرابط نفسه هو التفويض (مثل Stripe links)
+// قراءة داخلية لطلب واحد مع نطاقه (تُستخدم عند تأكيد الدفع — ليست صفحة عامة)
 export async function getPublicOrder(id) {
   const { systemDb } = await import("./src/security/tenantGuard.mjs");
-  const row = await systemDb("orders:public-pay-page").order.findUnique({
+  const row = await systemDb("orders:internal").order.findUnique({
     where: { id },
-    select: { id: true, tenantId: true, phone: true, items: true, total: true, currency: true, status: true, stripeSessionId: true },
+    select: { id: true, tenantId: true, phone: true, items: true, total: true, currency: true, status: true },
   });
   if (!row) return null;
-  return { id: row.id, tenantId: row.tenantId, phone: row.phone, items: row.items, total: Number(row.total), currency: row.currency, status: row.status, stripeSessionId: row.stripeSessionId || null };
+  return { id: row.id, tenantId: row.tenantId, phone: row.phone, items: row.items, total: Number(row.total), currency: row.currency, status: row.status };
 }
 
 export async function listOrders(tenantId) {
@@ -55,18 +54,12 @@ export async function listOrdersAll() {
 }
 
 export async function markOrderPaid(id, tenantId) {
-  // الدفع يُؤكَّد فقط عبر Stripe webhook (ليس عبر ?paid=1) — انظر workflows الدفع
+  // التأكيد فقط عبر تحقق الإيصال أو الموظف — تحديث ذري يمنع التأكيد المزدوج
   const row = await tenantDb(tenantId).order.update({
     where: { id },
     data: { status: "paid", paidAt: new Date() },
   }).catch(() => null);
   return rowToOrder(row);
-}
-
-export async function setOrderUrl(id, tenantId, url) {
-  await tenantDb(tenantId).order.update({
-    where: { id }, data: { paymentUrl: url },
-  }).catch(() => null);
 }
 
 // سلة مهجورة: طلبات pending بدون دفع وبدون تذكير ومر عليها N دقيقة
@@ -106,7 +99,6 @@ function rowToOrder(r) {
     items: r.items, total: Number(r.total), currency: r.currency,
     status: r.status, paymentUrl: r.paymentUrl, proof: r.proof || null,
     cartRemindedAt: r.cartRemindedAt, createdAt: r.createdAt, paidAt: r.paidAt,
-    stripeSessionId: r.stripeSessionId || null,
   };
 }
 
@@ -155,43 +147,8 @@ export async function markOrderReview(id, tenantId, review) {
   return rowToOrder(row);
 }
 
-// رابط دفع Stripe — المسار اليدوي (CliQ/محافظ + لقطة شاشة) هو الأساسي.
-// بدون STRIPE_SECRET_KEY: لا رابط — يُطلب من العميل التحويل اليدوي وإرسال الإيصال.
-export async function createPaymentLink(order, baseUrl) {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    return { url: null, mock: true, manual: true };
-  }
-  const params = new URLSearchParams({
-    "payment_method_types[]": "card",
-    mode: "payment",
-    success_url: `${baseUrl}/pay/${order.id}?paid=1`,
-    cancel_url: `${baseUrl}/pay/${order.id}?canceled=1`,
-    client_reference_id: order.id,
-    "metadata[orderId]": order.id,
-    "metadata[tenantId]": order.tenantId,
-    "line_items[0][price_data][currency]": order.currency.toLowerCase(),
-    "line_items[0][price_data][product_data][name]": `Order ${order.id}`,
-    "line_items[0][price_data][unit_amount]": String(Math.round(order.total * 100)),
-    "line_items[0][quantity]": "1",
-  });
-  const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || "Stripe failed");
-  await setOrderUrl(order.id, order.tenantId, data.url);
-  const { tenantDb: T } = await import("./src/security/tenantGuard.mjs");
-  await T(order.tenantId).order.update({
-    where: { id: order.id }, data: { stripeSessionId: data.id },
-  }).catch(() => null);
-  return { url: data.url, mock: false, sessionId: data.id };
-}
+// سياسة الدفع: محافظ/CliQ + إيصال حصراً — لا بوابات إلكترونية ولا روابط دفع.
+// التأكيد يتم فقط عبر تحقق الإيصال الآلي أو تأكيد الموظف اليدوي.
 
 // تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
 // تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)

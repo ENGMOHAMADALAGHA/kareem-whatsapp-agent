@@ -77,22 +77,26 @@ export async function cancelAppointment(id, tenantId) {
   return rowToBooking(row);
 }
 
-// ── منع التعارض: هل الموعد محجوز؟ ──
+// ── منع التعارض: موعد واحد لكل وقت — سياسة ثابتة (طبيب/مزرعة/تجميل).
+// لا حجوزات مزدوجة أبداً: أي capacity>1 قديمة تُتجاهل مع تحذير (قيد DB فريد).
 export async function countSlotBookings(tenantId, day, slot) {
   return tenantDb(tenantId).appointment.count({
     where: { day, slot, status: "confirmed" },
   });
 }
 
-export async function isSlotTaken(tenantId, day, slot, capacity = 1) {
-  return (await countSlotBookings(tenantId, day, slot)) >= capacity;
+export async function isSlotTaken(tenantId, day, slot, capacity) {
+  if (capacity !== undefined && capacity !== 1) {
+    console.warn(`  ⚠️ slotCapacity=${capacity} مرفوضة — موعد واحد لكل وقت (تجاهل)`);
+  }
+  return (await countSlotBookings(tenantId, day, slot)) >= 1;
 }
 
 // أقرب الأوقات الفارغة لنفس اليوم
-export async function freeSlots(tenantId, day, allSlots, capacity = 1) {
+export async function freeSlots(tenantId, day, allSlots) {
   const free = [];
   for (const s of allSlots || []) {
-    if (!(await isSlotTaken(tenantId, day, s, capacity))) free.push(s);
+    if (!(await isSlotTaken(tenantId, day, s))) free.push(s);
   }
   return free;
 }

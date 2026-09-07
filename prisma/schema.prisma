@@ -66,6 +66,7 @@ model Order {
   paidAt         DateTime? @map("paid_at") @db.Timestamptz(6)
 
   @@index([tenantId, createdAt])
+  @@index([status, cartRemindedAt, createdAt])
   @@map("orders")
 }
 
@@ -83,6 +84,7 @@ model Appointment {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, createdAt])
+  @@index([status, remindedAt, createdAt])
   @@unique([tenantId, day, slot])
   @@map("appointments")
 }
@@ -109,6 +111,7 @@ model Broadcast {
   results   Json
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  @@index([tenantId, createdAt])
   @@map("broadcasts")
 }
 

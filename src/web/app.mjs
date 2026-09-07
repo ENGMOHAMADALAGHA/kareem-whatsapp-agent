@@ -11,7 +11,6 @@ import { adminAuth, scopeClient } from "./middleware.mjs";
 import { registerAdminRoutes } from "./routes/admin.mjs";
 import { registerPortalRoutes } from "./routes/portal.mjs";
 import { registerWebhookRoutes } from "./routes/webhook.mjs";
-import { registerBillingRoutes } from "./routes/billing.mjs";
 import { startSchedulers } from "../jobs/schedulers.mjs";
 
 export function createApp() {
@@ -24,6 +23,8 @@ export function createApp() {
     },
   }));
   app.use(express.urlencoded({ extended: true }));
+  // أصول محلية (Tailwind مُضمّن — لا سكربتات خارجية حية داخل الكونسول)
+  app.use("/assets", express.static(path.join(__dirname, "..", "..", "assets")));
   app.use("/admin", adminAuth);
   app.use("/admin", scopeClient);
 
@@ -50,7 +51,6 @@ export function createApp() {
   registerAdminRoutes(app);
   registerPortalRoutes(app);
   registerWebhookRoutes(app);
-  registerBillingRoutes(app);
 
   // 404 موحد + ملقم أخطاء يمنع تسرب الستاك
   app.use((req, res) => {
@@ -86,6 +86,9 @@ export function startServer(port = PORT) {
     }
     if (!META_APP_SECRET) {
       console.log("  ⚠️  META_APP_SECRET غير مضبوط — webhooks الواردة ستُرفض (403 fail-closed)");
+    }
+    if (!WEBHOOK_VERIFY_TOKEN || WEBHOOK_VERIFY_TOKEN === "my_secret_token") {
+      console.log("  ⚠️  WEBHOOK_VERIFY_TOKEN افتراضي (my_secret_token) — غيّره في .env قبل أي نشر عمومي لمنع خطف الاشتراك");
     }
     console.log("═".repeat(60));
     console.log(`  💡 للاختبار المحلي: استخدم ngrok أو similar`);

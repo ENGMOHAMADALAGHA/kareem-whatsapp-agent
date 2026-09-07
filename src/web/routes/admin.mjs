@@ -22,7 +22,6 @@ import {
   listOrders,
   listOrdersAll,
   markOrderPaid,
-  createPaymentLink,
   detectTotal,
   detectItem,
   dueCartReminders,
@@ -267,43 +266,6 @@ export function registerAdminRoutes(app) {
     }
     logEvent("order_paid", { tenantId, phone: order.phone, orderId: order.id, total: order.total, manual: true }).catch(() => {});
     res.json({ ok: true, orderId: order.id });
-  });
-  app.get("/pay/:orderId", async (req, res) => {
-    const { getPublicOrder } = await import("../../../orders.mjs");
-    const order = await getPublicOrder(req.params.orderId);
-    if (!order) return res.status(404).send("الطلب غير موجود");
-    // S1: كل قيم الطلب (أسماء الأصناف من مخرجات AI) تُهرَّب قبل الحقن في HTML
-    const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const safeId = esc(order.id);
-    const safeItems = esc((order.items || []).map((i) => i.name).join(" + "));
-    const safeTotal = esc(order.total);
-    const safeCurrency = esc(order.currency);
-    const safeStatus = esc(order.status);
-    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
-    if (req.query.paid === "1") {
-      // NEVER trust ?paid=1 alone — only a verified Stripe session may flip to paid.
-      // Without STRIPE_SECRET_KEY there is no verification possible → refuse.
-      if (!process.env.STRIPE_SECRET_KEY || !order.stripeSessionId) {
-        return res.status(402).send(
-          `<h2>الدفع غير مؤكد ⏳ ${safeId}</h2><p>رابط الدفع تجريبي — لا يمكن تأكيد الدفع تلقائياً. أكمل الدفع عبر الرابط الرسمي أو انتظر تأكيد الموظف.</p>`
-        );
-      }
-      try {
-        const sres = await fetch(`https://api.stripe.com/v1/checkout/sessions/${order.stripeSessionId}`, {
-          headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
-        });
-        const sess = await sres.json();
-        if (sess.payment_status !== "paid") {
-          return res.send(`<h2>الدفع غير مكتمل ⏳ ${safeId}</h2><p>لم يصلنا تأكيد الدفع بعد. أكمل الدفع ثم حدّث الصفحة.</p>`);
-        }
-      } catch (e) {
-        return res.status(502).send("تعذر التحقق من الدفع، حاول لاحقاً.");
-      }
-      const { finalizePaidOrder } = await import("./billing.mjs");
-      await finalizePaidOrder(order.id, "pay-page-verified");
-      return res.send(`<h2>تم الدفع ✅ ${safeId} - $${safeTotal}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
-    }
-    res.send(`<h2>طلب ${safeId}</h2><p>${safeItems} — الإجمالي $${safeTotal} ${safeCurrency}</p><a href="/pay/${safeId}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${safeStatus}</p>`);
   });
   app.post("/admin/broadcast", async (req, res) => {
     const { tenantId, text, phones } = req.body || {};

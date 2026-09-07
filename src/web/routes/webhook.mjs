@@ -23,7 +23,6 @@ import {
   listOrders,
   listOrdersAll,
   markOrderPaid,
-  createPaymentLink,
   detectTotal,
   detectItem,
   dueCartReminders,
@@ -486,10 +485,9 @@ async function processWebhookBody(body) {
               const slot = slotMatch[1];
               const service = (tenant.products || [])[0]?.name || "موعد";
               const day = bookingState.day || "أقرب يوم متاح";
-              const capacity = tenant.features?.slotCapacity || 1;
-              // منع التعارض: إذا محجوز اعرض البدائل
-              if (await isSlotTaken(tenant.id, day, slot, capacity)) {
-                const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots, capacity);
+              // سياسة ثابتة: موعد واحد لكل وقت (طبيب/مزرعة/تجميل — لا حجوزات مزدوجة أبداً)
+              if (await isSlotTaken(tenant.id, day, slot)) {
+                const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots);
                 const reply = free.length
                   ? `للأسف الساعة ${slot} محجوزة يا غالي 😅 بس الفارغ عندنا: ${free.join("، ")}. اختر واحد منهم؟ أو ابعت "انتظار" لأضيفك لقائمة الانتظار.`
                   : `للأسف كل الأوقات محجوزة اليوم 😅 أضفتك تلقائياً لقائمة الانتظار، وأول ما يفضى موعد بخبرك فوراً.`;
@@ -516,7 +514,7 @@ async function processWebhookBody(body) {
                 booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service, day, slot });
               } catch (e) {
                 if (e?.code === "SLOT_TAKEN" || e?.code === "P2002") {
-                  const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots, capacity);
+                  const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots);
                   const reply = free.length
                     ? `للأسف الساعة ${slot} انحجزت قبل لحظات 😅 الفارغ عندنا: ${free.join("، ")}. اختر واحد منهم؟`
                     : `للأسف كل الأوقات انحجزت 😅 أضفتك لقائمة الانتظار.`;
@@ -582,27 +580,19 @@ async function processWebhookBody(body) {
                 total = order.total; // التزم بإجمالي الطلب الأصلي
                 console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه بدل الجديد`);
               }
+              // دفع بالمحافظ/CliQ حصراً — لا روابط دفع أبداً: تحويل + لقطة شاشة + تحقق
               const wallets = tenant.features?.paymentWallets || [];
               if (wallets.length) {
-                // دفع بالمحافظ/CliQ: تحويل + لقطة شاشة + تحقق AI تلقائي
                 const lines = wallets.map((w) => `• ${w.type}: ${w.number}${w.name ? ` (${w.name})` : ""}`).join("\n");
                 result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
                 console.log(`  💳 طلب ${order.id} $${total} -> محافظ`);
               } else {
-                const baseUrl = process.env.PUBLIC_BASE_URL || `https://kareem-whatsapp-agent.onrender.com`;
-                const { url: payUrl } = await createPaymentLink(order, baseUrl);
-                if (payUrl) {
-                  result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}. ادفع هنا: ${payUrl}`;
-                  console.log(`  💳 طلب ${order.id} $${total} -> ${payUrl}`);
-                } else {
-                  // المسار الأساسي بدون Stripe: تحويل يدوي (CliQ/محفظة) + إيصال
-                  const cliq = tenant.features?.cliq;
-                  const instructions = cliq?.number
-                    ? `حوّل $${total} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
-                    : `ابعت "أريد موظف" ليعطيك رقم التحويل (CliQ/محفظة)`;
-                  result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
-                  console.log(`  💳 طلب ${order.id} $${total} -> تحويل يدوي`);
-                }
+                const cliq = tenant.features?.cliq;
+                const instructions = cliq?.number
+                  ? `حوّل $${total} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
+                  : `ابعت "أريد موظف" ليعطيك رقم التحويل (CliQ/محفظة)`;
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
+                console.log(`  💳 طلب ${order.id} $${total} -> تحويل يدوي`);
               }
               if (isNew) {
                 logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});

@@ -21,7 +21,6 @@ export const JWT_SECRET = process.env.JWT_SECRET || "";
 export const TOKEN_ENC_KEY = process.env.TOKEN_ENC_KEY || "";
 
 export const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://kareem-whatsapp-agent.onrender.com";
-export const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 export const CRM_WEBHOOK_URL = process.env.CRM_WEBHOOK_URL || "";
 
 export const META_APP_SECRET = process.env.META_APP_SECRET || "";

@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { getPublicOrder, markOrderPaid } from "../../../orders.mjs";
 import { getTenantFull } from "../../../tenants.mjs";
 import { sendWhatsAppMessage } from "../../whatsapp/sender.mjs";
@@ -6,12 +5,24 @@ import { pushHistory } from "../../memory/conversations.mjs";
 import { requestCsat } from "../../../engage.mjs";
 import { logEvent } from "../../../crm.mjs";
 
-// منطق واحد لتأكيد الدفع (يُستخدم من /pay ومن Stripe webhook)
+// سياسة الدفع: محافظ/CliQ + إيصال حصراً — لا بوابات إلكترونية.
+// التأكيد يتم فقط عبر تحقق الإيصال الآلي (receipt-ai) أو تأكيد الموظف اليدوي.
+
+// منطق واحد لتأكيد الدفع (يُستخدم من تحقق الإيصال ومن تأكيد الموظف)
+// ذري: updateMany بشرط status!=paid — المتسابق الثاني يرى count=0 فلا يكرر التنفيذ
 export async function finalizePaidOrder(orderId, source = "manual") {
   const order = await getPublicOrder(orderId);
   if (!order) throw new Error("الطلب غير موجود");
   if (order.status === "paid") return { already: true, order };
-  await markOrderPaid(order.id, order.tenantId);
+  const { tenantDb } = await import("../../security/tenantGuard.mjs");
+  const claimed = await tenantDb(order.tenantId).order.updateMany({
+    where: { id: order.id, status: { not: "paid" } },
+    data: { status: "paid", paidAt: new Date() },
+  }).catch(() => ({ count: 0 }));
+  if (!claimed || claimed.count === 0) {
+    const fresh = await getPublicOrder(orderId);
+    return { already: true, order: fresh || order };
+  }
   logEvent("order_paid", {
     tenantId: order.tenantId, phone: order.phone,
     orderId: order.id, total: order.total, source,
@@ -30,41 +41,7 @@ export async function finalizePaidOrder(orderId, source = "manual") {
   return { already: false, order };
 }
 
-// تحقق توقيع Stripe (بدون مكتبة خارجية)
-export function verifyStripeSignature(rawBody, header, secret) {
-  if (!secret || !header) return false;
-  const parts = Object.fromEntries(header.split(",").map((p) => p.trim().split("=")));
-  if (!parts.t || !parts.v1) return false;
-  // حماية من هجمات إعادة التشغيل: فارق 5 دقائق كحد أقصى
-  if (Math.abs(Date.now() / 1000 - Number(parts.t)) > 300) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${parts.t}.${rawBody}`).digest("hex");
-  const a = Buffer.from(parts.v1);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
 export function registerBillingRoutes(app) {
-  // Webhook Stripe الرسمي — المصدر الوحيد الموثوق لتأكيد الدفع
-  app.post("/webhooks/stripe", async (req, res) => {
-    const secret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!secret) return res.status(500).json({ ok: false, error: "STRIPE_WEBHOOK_SECRET غير مضبوط" });
-    const raw = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body);
-    if (!verifyStripeSignature(raw, req.headers["stripe-signature"] || "", secret)) {
-      console.warn("  ❌ توقيع Stripe غير صالح");
-      return res.sendStatus(403);
-    }
-    const event = req.body;
-    if (event.type === "checkout.session.completed") {
-      const orderId = event.data?.object?.metadata?.orderId || event.data?.object?.client_reference_id;
-      if (orderId) {
-        try {
-          await finalizePaidOrder(orderId, "stripe");
-          console.log(`  💳 تأكيد Stripe للطلب ${orderId}`);
-        } catch (e) {
-          console.error(`  ❌ خطأ تأكيد Stripe: ${e.message}`);
-        }
-      }
-    }
-    res.json({ received: true });
-  });
+  // لا بوابات دفع إلكترونية — الدفع محافظ/CliQ + إيصال فقط.
+  // تُبقى الدالة كنقطة تسجيل مستقبلية إن تغيرت السياسة.
 }
