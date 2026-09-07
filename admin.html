@@ -426,7 +426,15 @@ async function api(path, opts, timeoutMs) {
   try {
     const r = await fetch(path, { credentials: "include", ...opts, signal: ctrl.signal });
     if (r.status === 401 && isPortal) { showLogin(); throw new Error("login"); }
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) {
+      // أظهر سبب السيرفر الحقيقي بدل رقم HTTP أعمى (التشخيص نصف العلاج)
+      let detail = "HTTP " + r.status;
+      try {
+        const ej = await r.clone().json();
+        if (ej && ej.error) detail += " — " + ej.error;
+      } catch (e) { /* رد غير JSON */ }
+      throw new Error(detail);
+    }
     return r.json();
   } catch (e) {
     if (e && e.name === "AbortError") throw new Error("timeout");
