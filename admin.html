@@ -318,14 +318,17 @@
         <input id="botId" class="field" placeholder="المعرف (انجليزي صغير: clinic-noor)">
         <input id="botNameFull" class="field" placeholder="اسم النشاط (عيادة النور)">
         <input id="botBotName" class="field" placeholder="اسم البوت (نور)">
-        <select id="botBiz" class="field">
+        <input id="botBiz" class="field" list="bizList" placeholder="نوع النشاط — اكتب أي شي: مزرعة، عيادة، متجر...">
+        <datalist id="bizList">
           <option value="dental">🦷 عيادة أسنان</option>
           <option value="sport-store">👟 متجر رياضي</option>
           <option value="retail">🏪 تجزئة</option>
           <option value="beauty">💅 تجميل</option>
           <option value="restaurant">🍔 مطعم</option>
+          <option value="farm">🚜 مزرعة</option>
           <option value="general">📦 عام</option>
-        </select>
+        </datalist>
+        <label class="flex items-center gap-2 text-sm"><input id="botBooking" type="checkbox"> 📅 تفعيل الحجوزات والمواعيد لهذا البوت</label>
       </div>
       <!-- Step 2: whatsapp -->
       <div class="wiz-pane space-y-2 hidden" data-pane="1">
@@ -1036,7 +1039,7 @@ function renderBotReview() {
   const rows = [
     ["البوت", (b.botName || "") + " — " + (b.name || "")],
     ["المعرف", editingBotId || b.id || "—"],
-    ["النوع", $("botBiz").options[$("botBiz").selectedIndex].textContent],
+    ["النوع", $("botBiz").value.trim() || "general"],
     ["Phone ID", b.phoneNumberId || "مشترك"],
     ["التوكن", b.whatsappToken ? "خاص جديد 🔑" : "كما هو"],
     ["CliQ", b.features?.cliq ? b.features.cliq.number + " (" + (b.features.cliq.name || "") + ")" : "—"],
@@ -1056,17 +1059,21 @@ function renderBotReview() {
   });
 }
 
+let editingFeatures = {};
+
 function fillBotForm(t) {
   $("botId").value = t?.id || "";
   $("botId").disabled = !!t;
   $("botNameFull").value = t?.name || "";
   $("botBotName").value = t?.botName || "";
   $("botBiz").value = t?.businessType || "general";
+  $("botBooking").checked = !!(t?.features && t.features.booking);
   $("botPhoneId").value = t?.phoneNumberId || t?.phone_number_id || "";
   $("botVerify").value = t?.verifyToken || t?.verify_token || "";
   $("botToken").value = "";
   $("botToken").placeholder = t?.hasOwnToken ? "توكن خاص محفوظ ✅ (اتركه فارغاً للإبقاء)" : "WhatsApp Token الخاص (اختياري)";
   const f = t?.features || {};
+  editingFeatures = { ...f };
   $("botCliqNum").value = f.cliq?.number || "";
   $("botCliqName").value = f.cliq?.name || "";
   $("botWallets").value = (f.paymentWallets || []).map((w) => [w.type, w.number, w.name || ""].filter(Boolean).join(" | ")).join("\n");
@@ -1101,13 +1108,17 @@ function collectBotForm() {
     const [type, number, name] = line.split("|").map((s) => s.trim());
     return { type: type || "محفظة", number: number || "", name: name || "" };
   }).filter((w) => w.number);
-  const features = {};
+  const features = { ...editingFeatures };
   if ($("botCliqNum").value.trim()) features.cliq = { number: $("botCliqNum").value.trim(), name: $("botCliqName").value.trim() };
+  else delete features.cliq;
   if (wallets.length) features.paymentWallets = wallets;
+  else delete features.paymentWallets;
+  if ($("botBooking").checked) features.booking = true;
+  else delete features.booking;
   const body = {
     name: $("botNameFull").value.trim(),
     botName: $("botBotName").value.trim(),
-    businessType: $("botBiz").value,
+    businessType: $("botBiz").value.trim() || "general",
     phoneNumberId: $("botPhoneId").value.trim() || null,
     verifyToken: $("botVerify").value.trim() || null,
     plan: $("botPlan").value,
@@ -1148,6 +1159,7 @@ async function saveBot() {
 // تعبئة المعالج من كائن جاهز (تُستخدم عند فشل الحفظ للحفاظ على مدخلات المستخدم)
 function refillBotForm(b, id) {
   editingBotId = id;
+  editingFeatures = { ...(b.features || {}) };
   $("botModalTitle").textContent = id ? "✏ تعديل بوت" : "＋ معالج تأهيل بوت جديد";
   fillBotForm(null);
   $("botId").value = id || b.id || "";
@@ -1155,6 +1167,7 @@ function refillBotForm(b, id) {
   $("botNameFull").value = b.name || "";
   $("botBotName").value = b.botName || "";
   $("botBiz").value = b.businessType || "general";
+  $("botBooking").checked = !!(b.features && b.features.booking);
   $("botPhoneId").value = b.phoneNumberId || "";
   $("botVerify").value = b.verifyToken || "";
   $("botCliqNum").value = b.features?.cliq?.number || "";
