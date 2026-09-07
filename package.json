@@ -23,8 +23,8 @@
   "author": "",
   "license": "MIT",
   "build": {
-    "appId": "com.kareem.commandcenter",
-    "productName": "Kareem Command Center",
+    "appId": "com.wasl.commandcenter",
+    "productName": "Wasl Command Center",
     "files": [
       "electron/**/*",
       "server.mjs",

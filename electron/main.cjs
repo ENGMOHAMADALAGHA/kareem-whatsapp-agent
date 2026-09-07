@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Kareem Command Center — Electron desktop shell (native window, no browser UI)
+// Wasl Command Center — Electron desktop shell (native window, no browser UI)
 // Boots the Express backend (server.mjs), waits for the port, opens /admin/.
 // ──────────────────────────────────────────────
 const path = require("node:path");
@@ -50,7 +50,7 @@ function createWindow() {  const iconPng = path.join(ROOT, "assets", "icon.png")
     height: 920,
     minWidth: 1080,
     minHeight: 680,
-    title: "Kareem Command Center — كريم",
+    title: "Wasl Command Center — وصل",
     backgroundColor: "#0b1220",
     autoHideMenuBar: true,
     ...(fs.existsSync(iconPng) ? { icon: iconPng } : {}),

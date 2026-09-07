@@ -181,7 +181,7 @@
     <div class="brand">
       <div class="brand-mark">🤖</div>
       <div class="brand-text">
-        <div class="brand-name">كريم</div>
+        <div class="brand-name">وصل <span style="font-size:.7rem;opacity:.7">Wasl</span></div>
         <div class="brand-sub">Command Center</div>
       </div>
     </div>
@@ -980,7 +980,7 @@ $("botSearch").oninput = applyBotFilter;
     const q = new URLSearchParams(location.search);
     if ((window.desktop && window.desktop.isDesktop) || q.get("desktop") === "1") {
       $("deskChip").classList.remove("hidden");
-      document.title = "Kareem Command Center — كريم";
+      document.title = "Wasl Command Center — وصل";
     }
   } catch (e) { /* تجاهل */ }
   await loadTenants();

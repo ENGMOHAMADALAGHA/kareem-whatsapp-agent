@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  One-Click Desktop Launcher (Windows) - Kareem Command Center
+REM  One-Click Desktop Launcher (Windows) - Wasl Command Center
 REM  Double-click: boots the backend + opens the DESKTOP APP window
 REM  (no browser). For browser mode use: npm run dev:ui
 REM ============================================================
@@ -32,6 +32,6 @@ if not exist "node_modules\electron" (
   echo.
 )
 
-echo [INFO] Launching Kareem Command Center (desktop app)...
+echo [INFO] Launching Wasl Command Center (desktop app)...
 call npx electron .
 pause
