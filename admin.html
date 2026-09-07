@@ -345,6 +345,8 @@
           <input id="botCliqName" class="field flex-1" placeholder="اسم CliQ">
         </div>
         <textarea id="botWallets" class="field" rows="3" placeholder="محافظ إضافية (سطر لكل محفظة: النوع | الرقم | الاسم)"></textarea>
+        <input id="botStaff" class="field" dir="ltr" placeholder="📲 رقم الطاقم للتنبيهات (واتساب المالك)">
+        <p class="text-xs text-slate-500">💡 تنبيهات الحجز/الدفع/التصعيد توصله واتساب فوراً.</p>
         <p class="text-xs text-slate-500">💡 الإيصالات تُتحقق تلقائياً بالذكاء الاصطناعي عند إرسال لقطة الشاشة.</p>
       </div>
       <!-- Step 4: plan & review -->
@@ -1078,6 +1080,7 @@ function fillBotForm(t) {
   $("botCliqNum").value = f.cliq?.number || "";
   $("botCliqName").value = f.cliq?.name || "";
   $("botWallets").value = (f.paymentWallets || []).map((w) => [w.type, w.number, w.name || ""].filter(Boolean).join(" | ")).join("\n");
+  $("botStaff").value = f.staffPhone || "";
   $("botPlan").value = t?.plan || "trial";
   $("botTrial").value = t?.trialEndsAt ? String(t.trialEndsAt).slice(0, 10) : "";
   $("botEnabled").checked = t ? t.enabled !== false : true;
@@ -1114,6 +1117,8 @@ function collectBotForm() {
   else delete features.cliq;
   if (wallets.length) features.paymentWallets = wallets;
   else delete features.paymentWallets;
+  if ($("botStaff").value.trim()) features.staffPhone = $("botStaff").value.trim();
+  else delete features.staffPhone;
   if ($("botBooking").checked) features.booking = true;
   else delete features.booking;
   const body = {
@@ -1174,6 +1179,7 @@ function refillBotForm(b, id) {
   $("botCliqNum").value = b.features?.cliq?.number || "";
   $("botCliqName").value = b.features?.cliq?.name || "";
   $("botWallets").value = (b.features?.paymentWallets || []).map((w) => [w.type, w.number, w.name || ""].filter(Boolean).join(" | ")).join("\n");
+  $("botStaff").value = b.features?.staffPhone || "";
   $("botPlan").value = b.plan || "trial";
   $("botTrial").value = b.trialEndsAt || "";
   $("botEnabled").checked = b.enabled !== false;
