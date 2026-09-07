@@ -5,6 +5,9 @@ import {
   GOOGLE_API_KEY,
   OPENAI_API_KEY,
   AI_MODEL,
+  AI_TIMEOUT_MS,
+  AI_HISTORY_LIMIT,
+  AI_HISTORY_CHARS,
 } from "../config/env.mjs";
 import { resolveTenantInput, buildSystemPrompt } from "../../tenants.mjs";
 import { getHistory, pushHistory } from "../memory/conversations.mjs";
@@ -159,59 +162,64 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
   const tenant = await resolveTenantInput(tenantInput);
   // كريم الحالي يبقى كما هو؛ أي tenant جديد يستخدم prompt مبني من إعداداته
   const prompt = tenant?.id === "kareem-sport" ? SYSTEM_PROMPT : buildSystemPrompt(tenant);
-  const botLabel = tenant?.botName || "كريم";
 
   // وضع DEMO بدون استهلاك API - مع ذاكرة بسيطة
   if (isDemoMode) {
     await new Promise((r) => setTimeout(r, 300));
     const result = mockReply(userMessage);
     // حفظ في الذاكرة حتى في وضع DEMO (معزولة لكل بوت)
-    await pushHistory(phone, "user", userMessage, tenant);
-    await pushHistory(phone, "assistant", result.reply, tenant);
+    await Promise.all([
+      pushHistory(phone, "user", userMessage, tenant),
+      pushHistory(phone, "assistant", result.reply, tenant),
+    ]);
     return result;
   }
 
   try {
     let rawText = "";
-    const history = await getHistory(phone, tenant);
-    // تحويل التاريخ لنص للسياق
-    const historyContext = history.map(m => `${m.role === "user" ? "العميل" : botLabel}: ${m.text}`).join("\n");
+    // التوازي: تحميل السجل + حفظ رسالة العميل (مستقلان) — توفير ~200ms
+    const [history] = await Promise.all([
+      getHistory(phone, tenant),
+      pushHistory(phone, "user", userMessage, tenant),
+    ]);
+    // تقليم السياق المرسل للنموذج: آخر N رسائل فقط، مقصوصة الطول
+    // (السجل الكامل يبقى في DB/الذاكرة — هذا فقط ما يُدفع ثمنه زمناً وتوكنز)
+    const ctx = history.slice(-AI_HISTORY_LIMIT).map((m) => ({
+      role: m.role,
+      text: m.text && m.text.length > AI_HISTORY_CHARS ? m.text.slice(0, AI_HISTORY_CHARS) + "…" : (m.text || ""),
+    }));
 
     if (AI_PROVIDER === "google") {
-      // نمرر التاريخ كجزء من السياق + الرسالة الحالية
+      // السجل يُمرر مرة واحدة فقط كمصفوفة contents (لا تكرار نصي في systemInstruction)
       const fullContents = [];
-      // إضافة التاريخ كمحادثة سابقة
-      for (const h of history) {
+      for (const h of ctx) {
         fullContents.push({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.text }] });
       }
       fullContents.push({ role: "user", parts: [{ text: userMessage }] });
 
-      const response = await googleClient.models.generateContent({
+      const response = await withAiTimeout(googleClient.models.generateContent({
         model: AI_MODEL,
         contents: fullContents,
         config: {
-          systemInstruction: prompt + (historyContext ? `\n\n# سجل المحادثة السابقة مع هذا العميل (${phone}):\n${historyContext}\n(استخدمه لتتذكر ماذا طلب العميل ولا تكرر الأسئلة)` : ""),
+          systemInstruction: prompt,
           responseMimeType: "application/json",
           temperature: 0.7,
         },
-      });
+      }));
       rawText = response.text;
     } else {
       const messages = [{ role: "system", content: prompt }];
-      if (historyContext) {
-        messages.push({ role: "system", content: `سجل المحادثة السابقة مع العميل ${phone}:\n${historyContext}` });
-      }
-      for (const h of history) {
+      for (const h of ctx) {
         messages.push({ role: h.role === "user" ? "user" : "assistant", content: h.text });
       }
       messages.push({ role: "user", content: userMessage });
 
-      const completion = await openaiClient.chat.completions.create({
+      const completion = await withAiTimeout(openaiClient.chat.completions.create({
         model: AI_MODEL,
         messages,
         response_format: { type: "json_object" },
         temperature: 0.7,
-      });
+      }));
       rawText = completion.choices[0].message.content;
     }
 
@@ -241,17 +249,24 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
       console.warn(`  ⚠️  تحذير: الرد يحتوي على منتج غير مصرح به!`);
     }
 
-    // حفظ في الذاكرة (معزولة لكل بوت)
-    await pushHistory(phone, "user", userMessage, tenant);
+    // حفظ رد المساعد فقط (رسالة العميل حُفظت مسبقاً بالتوازي مع التحميل)
     await pushHistory(phone, "assistant", parsed.reply, tenant);
     return parsed;
   } catch (err) {
     console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
     const fallback = mockReply(userMessage);
-    await pushHistory(phone, "user", userMessage, tenant);
     await pushHistory(phone, "assistant", fallback.reply, tenant);
     return fallback;
   }
+}
+
+// مهلة صارمة على استدعاء الـ AI — أسوأ حالة محدودة بدل تعليق العامل
+function withAiTimeout(promise) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`AI timeout ${AI_TIMEOUT_MS}ms`)), AI_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 // الاسم المطلوب في التكليف: processCustomerMessage

@@ -5,8 +5,13 @@ import { decryptSecret, encryptSecret } from "./src/security/secrets.mjs";
 let cache = { data: null, at: 0 };
 const CACHE_TTL_MS = 60 * 1000;
 
+// كاش صفوف البوتات المنفردة (getTenant كان يضرب DB مع كل رسالة)
+const rowCache = new Map(); // id -> { data, at }
+const ROW_TTL_MS = 60 * 1000;
+
 function invalidate() {
   cache = { data: null, at: 0 };
+  rowCache.clear();
 }
 
 async function loadTenants() {
@@ -49,7 +54,13 @@ export async function listTenants() {
 }
 
 export async function getTenant(id) {
-  return systemDb("tenants:get").tenant.findUnique({ where: { id } });
+  if (!id) return null;
+  const hit = rowCache.get(id);
+  if (hit && Date.now() - hit.at < ROW_TTL_MS) return hit.data;
+  const row = await systemDb("tenants:get").tenant.findUnique({ where: { id } });
+  if (row) rowCache.set(id, { data: row, at: Date.now() });
+  else rowCache.delete(id);
+  return row;
 }
 
 export async function getDefaultTenant() {

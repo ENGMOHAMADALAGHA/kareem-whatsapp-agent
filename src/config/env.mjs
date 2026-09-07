@@ -36,6 +36,11 @@ export const CART_AFTER_MIN = Number(process.env.CART_AFTER_MIN || 60);
 export const MAX_HISTORY = 10;
 export const MEMORY_TTL_MS = 1000 * 60 * 60 * 6;
 
+// ── سرعة الرد: سياق أصغر + مهلة صارمة على الـ AI ──
+export const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 25000);
+export const AI_HISTORY_LIMIT = Number(process.env.AI_HISTORY_LIMIT || 6);
+export const AI_HISTORY_CHARS = Number(process.env.AI_HISTORY_CHARS || 500);
+
 // ── P1: طوابير دائمة (Redis/BullMQ — اختياري، رجوع تلقائي للذاكرة) ──
 export const REDIS_URL = process.env.REDIS_URL || "";
 export const USE_DURABLE_QUEUE = process.env.USE_DURABLE_QUEUE !== "0" && !!process.env.REDIS_URL;
