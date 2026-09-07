@@ -58,7 +58,19 @@ function createWindow() {  const iconPng = path.join(ROOT, "assets", "icon.png")
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
+  });
+  // حصر التنقل داخل الكونسول المحلي + منع النوافذ المنبثقة
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.webContents.on("will-navigate", (e, url) => {
+    try {
+      const u = new URL(url);
+      const local = (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "::1") && Number(u.port) === PORT;
+      if (!local) e.preventDefault();
+    } catch {
+      e.preventDefault();
+    }
   });
   win.webContents.on("did-finish-load", async () => {
     console.log("[shell] WINDOW_READY " + ADMIN_URL);
@@ -77,10 +89,21 @@ function createWindow() {  const iconPng = path.join(ROOT, "assets", "icon.png")
   win.loadURL(ADMIN_URL);
 }
 
-// دخول تلقائي للوحة المدير (تطوير محلي فقط — نفس جهاز localhost).
+// دخول تلقائي للوحة المدير (تطوير محلي فقط — loopback حصراً).
 // يمنع نافذة الـ 401 JSON ويحقن Basic Auth من .env مباشرة.
+function isLoopbackAdmin(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:") return false;
+    if (!(u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "::1")) return false;
+    if (Number(u.port) !== PORT) return false;
+    return u.pathname === "/admin/" || u.pathname.startsWith("/admin/");
+  } catch {
+    return false;
+  }
+}
 app.on("login", (event, webContents, details, authInfo, callback) => {
-  if (!details || !details.url || !details.url.includes("localhost")) return; // لا تحقن خارج localhost أبداً
+  if (!details || !isLoopbackAdmin(details.url || "")) return; // لا تحقن خارج كونسول localhost أبداً
   event.preventDefault();
   const user = process.env.ADMIN_USER || "admin";
   const pass = process.env.ADMIN_PASS || "admin123";

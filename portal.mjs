@@ -10,9 +10,26 @@ function secret() {
 }
 
 // —— حسابات العملاء (يستدعيها السوبر أدمن فقط) ——
-export async function createClientUser({ tenantId, name, phone, password }) {
+// ملاحظة أمنية: upsert يعيد تعيين الكلمة — إعادة الدعوة مقصودة فقط عبر /admin/invites.
+// إنشاء مستخدم موجود عبر /admin/users مرفوض (409) لمنع الاستيلاء على الحسابات.
+export async function getClientUser(tenantId, phone) {
+  if (!tenantId || !phone) return null;
+  return tenantDb(tenantId).tenantUser.findUnique({
+    where: { tenantId_phone: { tenantId, phone } },
+  });
+}
+
+export async function createClientUser({ tenantId, name, phone, password, allowReset = false }) {
   if (!tenantId || !phone || !password) throw new Error("tenantId و phone و password مطلوبة");
   if (String(password).length < 6) throw new Error("كلمة السر 6 أحرف على الأقل");
+  if (!allowReset) {
+    const existing = await getClientUser(tenantId, phone);
+    if (existing) {
+      const e = new Error("المستخدم موجود مسبقاً — استخدم دعوة جديدة لتدوير الكلمة");
+      e.code = "USER_EXISTS";
+      throw e;
+    }
+  }
   const passwordHash = await bcrypt.hash(String(password), 10);
   return tenantDb(tenantId).tenantUser.upsert({
     where: { tenantId_phone: { tenantId, phone } },

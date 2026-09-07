@@ -92,6 +92,10 @@ export function registerAdminRoutes(app) {
     }
   });
   app.patch("/admin/tenants/:id", async (req, res) => {
+    // عزل العملاء: JWT العميل مقيد ببوته فقط — أي id آخر مرفوض
+    if (req.clientTenant && req.params.id !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذا البوت ليس لك" });
+    }
     try {
       const { updateTenant, isTrialExpired } = await import("../../../tenants.mjs");
       const updated = await updateTenant(req.params.id, req.body || {});
@@ -114,6 +118,9 @@ export function registerAdminRoutes(app) {
   });
   // فحص الربط الحي: هل Phone ID + Token شغالان فعلاً على Meta؟ (وضع Coexistence)
   app.post("/admin/tenants/:id/test-link", async (req, res) => {
+    if (req.clientTenant && req.params.id !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذا البوت ليس لك" });
+    }
     const t = await getTenantFull(req.params.id);
     if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     const token = t.whatsapp_token;
@@ -160,7 +167,7 @@ export function registerAdminRoutes(app) {
     const { PUBLIC_BASE_URL } = await import("../../config/env.mjs");
     let u;
     try {
-      u = await createClientUser({ tenantId, phone: String(phone).trim(), name: (name || "").trim() || String(phone).trim(), password: tempPassword });
+      u = await createClientUser({ tenantId, phone: String(phone).trim(), name: (name || "").trim() || String(phone).trim(), password: tempPassword, allowReset: true });
     } catch (e) {
       return res.status(400).json({ ok: false, error: e.message });
     }
@@ -190,6 +197,7 @@ export function registerAdminRoutes(app) {
       const u = await createClientUser(req.body || {});
       res.status(201).json({ ok: true, user: { id: u.id, tenantId: u.tenantId, phone: u.phone, name: u.name } });
     } catch (e) {
+      if (e?.code === "USER_EXISTS") return res.status(409).json({ ok: false, error: e.message });
       res.status(400).json({ ok: false, error: e.message });
     }
   });
@@ -203,6 +211,9 @@ export function registerAdminRoutes(app) {
     res.json({ count: rows.length, users: rows });
   });
   app.get("/admin/tenants/:id", async (req, res) => {
+    if (req.clientTenant && req.params.id !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذا البوت ليس لك" });
+    }
     const t = await getTenantFull(req.params.id);
     if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     // إخفاء التوكن (المشفر والمفكوك معاً — لا يغادر الخادم أبداً)
@@ -261,12 +272,20 @@ export function registerAdminRoutes(app) {
     const { getPublicOrder } = await import("../../../orders.mjs");
     const order = await getPublicOrder(req.params.orderId);
     if (!order) return res.status(404).send("الطلب غير موجود");
+    // S1: كل قيم الطلب (أسماء الأصناف من مخرجات AI) تُهرَّب قبل الحقن في HTML
+    const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const safeId = esc(order.id);
+    const safeItems = esc((order.items || []).map((i) => i.name).join(" + "));
+    const safeTotal = esc(order.total);
+    const safeCurrency = esc(order.currency);
+    const safeStatus = esc(order.status);
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
     if (req.query.paid === "1") {
       // NEVER trust ?paid=1 alone — only a verified Stripe session may flip to paid.
       // Without STRIPE_SECRET_KEY there is no verification possible → refuse.
       if (!process.env.STRIPE_SECRET_KEY || !order.stripeSessionId) {
         return res.status(402).send(
-          `<h2>الدفع غير مؤكد ⏳ ${order.id}</h2><p>رابط الدفع تجريبي — لا يمكن تأكيد الدفع تلقائياً. أكمل الدفع عبر الرابط الرسمي أو انتظر تأكيد الموظف.</p>`
+          `<h2>الدفع غير مؤكد ⏳ ${safeId}</h2><p>رابط الدفع تجريبي — لا يمكن تأكيد الدفع تلقائياً. أكمل الدفع عبر الرابط الرسمي أو انتظر تأكيد الموظف.</p>`
         );
       }
       try {
@@ -275,16 +294,16 @@ export function registerAdminRoutes(app) {
         });
         const sess = await sres.json();
         if (sess.payment_status !== "paid") {
-          return res.send(`<h2>الدفع غير مكتمل ⏳ ${order.id}</h2><p>لم يصلنا تأكيد الدفع بعد. أكمل الدفع ثم حدّث الصفحة.</p>`);
+          return res.send(`<h2>الدفع غير مكتمل ⏳ ${safeId}</h2><p>لم يصلنا تأكيد الدفع بعد. أكمل الدفع ثم حدّث الصفحة.</p>`);
         }
       } catch (e) {
         return res.status(502).send("تعذر التحقق من الدفع، حاول لاحقاً.");
       }
       const { finalizePaidOrder } = await import("./billing.mjs");
       await finalizePaidOrder(order.id, "pay-page-verified");
-      return res.send(`<h2>تم الدفع ✅ ${order.id} - $${order.total}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
+      return res.send(`<h2>تم الدفع ✅ ${safeId} - $${safeTotal}</h2><p>شكراً! كريم معك خطوة بخطوة 👟</p>`);
     }
-    res.send(`<h2>طلب ${order.id}</h2><p>${order.items?.map((i) => i.name).join(" + ")} — الإجمالي $${order.total} ${order.currency}</p><a href="/pay/${order.id}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${order.status}</p>`);
+    res.send(`<h2>طلب ${safeId}</h2><p>${safeItems} — الإجمالي $${safeTotal} ${safeCurrency}</p><a href="/pay/${safeId}?paid=1"><button style="padding:12px 24px">ادفع الآن (تجريبي)</button></a><p>الحالة: ${safeStatus}</p>`);
   });
   app.post("/admin/broadcast", async (req, res) => {
     const { tenantId, text, phones } = req.body || {};

@@ -60,7 +60,8 @@ export {
 // ──────────────────────────────────────────────
 // 8. التشغيل — نُقل إلى src/web/app.mjs (إعادة تصدير للتوافق)
 // ──────────────────────────────────────────────
-export { createApp, startServer } from "./src/web/app.mjs";
+import { createApp, startServer } from "./src/web/app.mjs";
+export { createApp, startServer };
 
 // ──────────────────────────────────────────────
 // 9. دالة التحقق والطباعة النظيفة (للاختبار المحلي)

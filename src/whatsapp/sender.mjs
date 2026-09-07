@@ -33,10 +33,11 @@ function isDemo(token, phoneId) {
 // POST واحد على Graph مع مهلة + إعادة ذكية (429/5xx) + DLQ.
 // الأخطاء تحمل status للتصنيف، وWINDOW_CLOSED لنفاد نافذة 24h.
 async function graphPost(url, token, body, label) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), OUTBOUND_TIMEOUT_MS);
-  try {
-    return await sendWithRetry(async () => {
+  // متحكم إلغاء لكل محاولة (لا يُشترك بين المحاولات — إشارة مجهضة تبقى مجهضة)
+  return await sendWithRetry(async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), OUTBOUND_TIMEOUT_MS);
+    try {
       let res;
       try {
         res = await fetch(url, {
@@ -69,10 +70,10 @@ async function graphPost(url, token, body, label) {
         throw err;
       }
       return data;
+    } finally {
+      clearTimeout(t);
+    }
     }, { label });
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 export async function sendWhatsAppMessage(to, text, tenantInput = null) {

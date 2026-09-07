@@ -61,6 +61,7 @@
   .av-retail { background: linear-gradient(135deg, #8b5cf6, #5b21b6); }
   .av-beauty { background: linear-gradient(135deg, #ec4899, #9d174d); }
   .av-restaurant { background: linear-gradient(135deg, #ef4444, #991b1b); }
+  .av-farm { background: linear-gradient(135deg, #16a34a, #14532d); }
   .av-general { background: linear-gradient(135deg, #64748b, #334155); }
   .status-pill {
     display: inline-flex; align-items: center; gap: .35rem;
@@ -830,7 +831,7 @@ $("replyInput").onkeydown = (e) => { if (e.key === "Enter") sendReply(); };
 $("remindBtn").onclick = async () => {
   toast("جاري تشغيل التذكير...", "info");
   try {
-    const j = await api("/admin/remind-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await api("/admin/remind-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
     toast("تم التذكير: " + (j.sent || []).length + " موعد", "success");
     loadBooking();
   } catch (e) { toast("فشل التذكير: " + e.message, "error"); }
@@ -851,7 +852,7 @@ let wizStep = 0;
 let botsCache = [];
 let kpiCache = { at: 0, review: null };
 const KPI_TTL_MS = 90000; // عدّادات المراجعة تُحدّث كل 90 ثانية كحد أقصى
-const BIZ_ICON = { dental: "🦷", "sport-store": "👟", retail: "🏪", beauty: "💅", restaurant: "🍔", general: "📦" };
+const BIZ_ICON = { dental: "🦷", "sport-store": "👟", retail: "🏪", beauty: "💅", restaurant: "🍔", farm: "🚜", general: "📦" };
 const PLAN_AR = { trial: "تجريبي", basic: "أساسي", clinic: "عيادات", pro: "احترافي" };
 
 function botStatus(t) {

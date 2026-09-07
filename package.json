@@ -1,7 +1,7 @@
 {
-  "name": "whatsapp-ai-agent-kareem",
+  "name": "wasl-command-center",
   "version": "1.0.0",
-  "description": "AI Sales Agent على واتساب باسم كريم لمتجر مستلزمات رياضية",
+  "description": "Wasl Command Center — منصة واتساب متعددة البوتات (بوت كريم التجريبي مدمج)",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

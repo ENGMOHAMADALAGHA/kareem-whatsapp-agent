@@ -29,7 +29,7 @@ export function createApp() {
 
   app.get("/", async (req, res) => {
     res.json({
-      name: "كريم - AI Sales Agent (Multi-Tenant)",
+      name: "Wasl Command Center — وصل (Multi-Tenant)",
       status: "running",
       webhook: "/webhook",
       admin: "/admin/tenants",
@@ -52,6 +52,17 @@ export function createApp() {
   registerWebhookRoutes(app);
   registerBillingRoutes(app);
 
+  // 404 موحد + ملقم أخطاء يمنع تسرب الستاك
+  app.use((req, res) => {
+    res.status(404).json({ ok: false, error: "غير موجود" });
+  });
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    console.error(`  ❌ خطأ غير معالج [${req.method} ${req.path}]: ${err.message}`);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ ok: false, error: "خطأ داخلي" });
+  });
+
   return app;
 }
 
@@ -60,7 +71,7 @@ export function startServer(port = PORT) {
   startSchedulers();
   const server = app.listen(port, () => {
     console.log("\n" + "═".repeat(60));
-    console.log("  🤖  كريم - AI Sales Agent | سيرفر واتساب Webhook");
+    console.log("  🤖  Wasl Command Center — وصل | سيرفر واتساب Webhook");
     console.log("═".repeat(60));
     console.log(`  🌐 السيرفر يعمل: http://localhost:${port}`);
     console.log(`  🔗 Webhook URL: http://localhost:${port}/webhook`);
