@@ -1,5 +1,5 @@
 import { resolveTenant, getTenantFull, listTenants, addTenant } from "../../../tenants.mjs";
-import { WHATSAPP_TOKEN } from "../../config/env.mjs";
+import { WHATSAPP_TOKEN, WEBHOOK_VERIFY_TOKEN } from "../../config/env.mjs";
 import {
   bookAppointment,
   listAppointments,

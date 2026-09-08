@@ -71,10 +71,14 @@ export async function markReminded(id, tenantId) {
 }
 
 export async function cancelAppointment(id, tenantId) {
-  const row = await tenantDb(tenantId).appointment.update({
-    where: { id }, data: { status: "canceled" },
-  }).catch(() => null);
-  return rowToBooking(row);
+  // الإلغاء يحذف الصف (لا تعليمه ملغياً): القيد الفريد @@unique(tenantId,day,slot)
+  // يمنع أي حجز لاحق لنفس الموعد لو بقي الصف — الحذف يحرر الموعد فوراً.
+  // السجل التاريخي محفوظ بأحداث CRM (booking_canceled).
+  const T = tenantDb(tenantId);
+  const existing = await T.appointment.findFirst({ where: { id } }).catch(() => null);
+  if (!existing) return null;
+  await T.appointment.delete({ where: { id } }).catch(() => null);
+  return rowToBooking(existing);
 }
 
 // ── منع التعارض: موعد واحد لكل وقت — سياسة ثابتة (طبيب/مزرعة/تجميل).

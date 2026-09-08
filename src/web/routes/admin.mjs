@@ -252,14 +252,16 @@ export function registerAdminRoutes(app) {
     }
     res.json({ ok: true, tenant: scope.global ? "all" : scope.tenant, total, byStatus });
   });
-  // تأكيد دفع يدوي (موظف تحقق من المحفظة) + إشعار الزبون
+  // تأكيد دفع يدوي (موظف تحقق من المحفظة) + إشعار الزبون — عبر المسار الذري الموحد
   app.post("/admin/orders/:id/confirm", async (req, res) => {
     const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
     if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
     const { getOrder } = await import("../../../orders.mjs");
     const order = await getOrder(req.params.id, tenantId).catch(() => null);
     if (!order) return res.status(404).json({ ok: false, error: "الطلب غير موجود" });
-    await markOrderPaid(order.id, tenantId);
+    const { finalizePaidOrder } = await import("./billing.mjs");
+    const { already } = await finalizePaidOrder(order.id, "manual", { csat: false });
+    if (already) return res.json({ ok: true, orderId: order.id, already: true });
     const { getTenantFull } = await import("../../../tenants.mjs");
     const tenant = await getTenantFull(tenantId);
     const { pushHistory } = await import("../../memory/conversations.mjs");
@@ -268,7 +270,6 @@ export function registerAdminRoutes(app) {
       await sendWhatsAppMessage(order.phone, msg, tenant).catch(() => {});
       await pushHistory(order.phone, "assistant", msg, tenant);
     }
-    logEvent("order_paid", { tenantId, phone: order.phone, orderId: order.id, total: order.total, manual: true }).catch(() => {});
     res.json({ ok: true, orderId: order.id });
   });
   app.post("/admin/broadcast", async (req, res) => {
@@ -423,6 +424,9 @@ export function registerAdminRoutes(app) {
     res.json({ count: inbox.length, inbox });
   });
   app.get("/admin/inbox/:tenantId/:phone", async (req, res) => {
+    if (req.clientTenant && req.params.tenantId !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذه المحادثة ليست لك" });
+    }
     const tenantId = req.clientTenant || req.params.tenantId;
     const { phone } = req.params;
     res.json({
@@ -501,6 +505,7 @@ load();
     if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
     const b = await cancelAppointment(req.params.id, tenantId);
     if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
+    logEvent("booking_canceled", { tenantId: b.tenantId, phone: b.phone, bookingId: b.id, service: b.service, slot: b.slot }).catch(() => {});
     // تعبئة تلقائية: أول واحد بالانتظار ياخذ الموعد
     let offered = null;
     try {

@@ -10,7 +10,7 @@ import { logEvent } from "../../../crm.mjs";
 
 // منطق واحد لتأكيد الدفع (يُستخدم من تحقق الإيصال ومن تأكيد الموظف)
 // ذري: updateMany بشرط status!=paid — المتسابق الثاني يرى count=0 فلا يكرر التنفيذ
-export async function finalizePaidOrder(orderId, source = "manual") {
+export async function finalizePaidOrder(orderId, source = "manual", opts = {}) {
   const order = await getPublicOrder(orderId);
   if (!order) throw new Error("الطلب غير موجود");
   if (order.status === "paid") return { already: true, order };
@@ -37,7 +37,8 @@ export async function finalizePaidOrder(orderId, source = "manual") {
     ).catch(() => {});
   } catch { /* أفضل-جهد */ }
   const tenant = await getTenantFull(order.tenantId);
-  if (tenant) {
+  // opts.csat=false عندما يرسل المتصل رسالته الخاصة (تأكيد الموظف) — بلا رسالتين
+  if (tenant && opts.csat !== false) {
     const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
     await requestCsat(order.tenantId, order.phone, order.id);
     try {
