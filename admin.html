@@ -1152,13 +1152,15 @@ async function saveBot() {
   if (!editingBotId && !body.id) { $("botMsg").textContent = "المعرف مطلوب"; return; }
   if (!body.name || !body.botName) { $("botMsg").textContent = "اسم النشاط واسم البوت مطلوبان"; return; }
   // حفظ متفائل: أغلق المعالج فوراً وأعلم المستخدم — التحديث يتم بالخلفية
+  // تنبيه: يؤخذ المعرف بنسخة محلية لأن closeBotModal() يصفّر editingBotId
   const isEdit = !!editingBotId;
+  const editId = editingBotId;
   const savedId = editingBotId || body.id;
   closeBotModal();
   toast(isEdit ? "جاري حفظ التعديلات..." : "جاري إنشاء البوت...", "info");
   try {
     if (isEdit) {
-      await api("/admin/tenants/" + encodeURIComponent(editingBotId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      await api("/admin/tenants/" + encodeURIComponent(editId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     } else {
       await api("/admin/tenants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     }
