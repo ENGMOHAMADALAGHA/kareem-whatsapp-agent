@@ -147,6 +147,19 @@ export async function markOrderReview(id, tenantId, review) {
   return rowToOrder(row);
 }
 
+// ── العملة: دينار أردني افتراضياً (السوق الأردني) ──
+// الدولار يُفعّل لكل عميل عبر features.currency فقط عند الطلب.
+export const DEFAULT_CURRENCY = "JOD";
+export function tenantCurrency(tenant) {
+  const c = tenant?.features?.currency || DEFAULT_CURRENCY;
+  return String(c).toUpperCase();
+}
+export function fmtMoney(amount, currency = DEFAULT_CURRENCY) {
+  const cur = String(currency || DEFAULT_CURRENCY).toUpperCase();
+  if (cur === "USD" || cur === "$") return `$${amount}`;
+  return `${amount} د.أ`;
+}
+
 // سياسة الدفع: محافظ/CliQ + إيصال حصراً — لا بوابات إلكترونية ولا روابط دفع.
 // التأكيد يتم فقط عبر تحقق الإيصال الآلي أو تأكيد الموظف اليدوي.
 
@@ -154,10 +167,11 @@ export async function markOrderReview(id, tenantId, review) {
 // تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
 export function detectTotal(tenant, userText, replyText) {
   const all = `${userText} ${replyText}`;
-  const m = all.match(/\$(\d+(?:\.\d+)?)/g);
+  // العملة قبل الرقم ($55) أو بعده (39 دينار / 50 د.أ) — المهم وجود علامة عملة
+  const m = all.match(/(?:(?:\$|د\.أ|دينار|JD)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:د\.أ|دينار|JD))/g);
   if (m && m.length) {
-    const nums = m.map((s) => parseFloat(s.replace("$", "")));
-    return Math.max(...nums);
+    const nums = m.map((s) => parseFloat(s.replace(/[^\d.]/g, ""))).filter((n) => !Number.isNaN(n));
+    if (nums.length) return Math.max(...nums);
   }
   const prices = (tenant.products || []).map((p) => p.price);
   const max = Math.max(...prices, 0);

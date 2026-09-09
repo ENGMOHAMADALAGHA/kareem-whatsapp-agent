@@ -164,14 +164,14 @@ export async function defaultButtonsFor(tenant) {
   const t = await resolveTenantInput(tenant);
   if (t?.id === "kareem-sport") {
     return [
-      { id: "buy_shoes", title: "👟 الحذاء $50" },
-      { id: "buy_belt", title: "💪 الحزام $20" },
-      { id: "bundle", title: "🎁 العرض $70" },
+      { id: "buy_shoes", title: "👟 الحذاء 50 د.أ" },
+      { id: "buy_belt", title: "💪 الحزام 20 د.أ" },
+      { id: "bundle", title: "🎁 العرض 70 د.أ" },
     ];
   }
   const btns = (t.products || []).slice(0, 2).map((p) => ({
     id: p.buttonId || p.name,
-    title: `${p.name} $${p.price}`.slice(0, 20),
+    title: `${p.name} ${p.price} د.أ`.slice(0, 20),
   }));
   if (t?.features?.booking) btns.push({ id: "booking", title: "📅 احجز موعد" });
   return btns.slice(0, 3);

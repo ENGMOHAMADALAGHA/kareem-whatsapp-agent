@@ -139,7 +139,7 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
     const { attachProof } = await import("../../orders.mjs");
     await attachProof(order.id, tenant.id, { mediaId, at: new Date().toISOString(), auto: false });
     await logEventSafe(logEvent, "proof_received", { tenantId: tenant.id, phone, orderId: order.id });
-    return { outcome: "manual", orderId: order.id, total: order.total };
+    return { outcome: "manual", orderId: order.id, total: order.total, currency: order.currency };
   }
 
   const { match, reasons } = verifyReceiptAgainstOrder(extracted, order, tenant);

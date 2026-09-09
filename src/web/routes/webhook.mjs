@@ -28,6 +28,8 @@ import {
   dueCartReminders,
   dueCartRemindersAll,
   markCartReminded,
+  fmtMoney,
+  tenantCurrency,
 } from "../../../orders.mjs";
 import { logEvent, listEvents, toCSV } from "../../../crm.mjs";
 import {
@@ -194,7 +196,7 @@ async function processWebhookBody(body) {
               console.log(`${"─".repeat(60)}\n`);
             } else if (res.outcome === "manual") {
               // بدون مفتاح AI: المسار اليدوي — إرفاق + انتظار الموظف
-              const reply = `وصلتني اللقطة يا بطل 📸 ربطتها بطلبك ${res.orderId} ($${res.total}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
+              const reply = `وصلتني اللقطة يا بطل 📸 ربطتها بطلبك ${res.orderId} (${fmtMoney(res.total, res.currency)}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
               await pushHistory(from, "user", "[صورة: لقطة تحويل]", tenant);
               await pushHistory(from, "assistant", reply, tenant);
               try {
@@ -267,8 +269,7 @@ async function processWebhookBody(body) {
             let reply;
             if (qOrder && qOrder.phone === from) {
               const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة اليدوية 🔍" }[qOrder.status] || qOrder.status;
-              reply = `طلبك ${qOrder.id} — ${(qOrder.items || []).map((i) => i.name).join(" + ")} — الإجمالي $${qOrder.total} — الحالة: ${statusAr}`;
-              if (qOrder.status === "pending" && qOrder.paymentUrl) reply += `\nرابط الدفع: ${qOrder.paymentUrl}`;
+              reply = `طلبك ${qOrder.id} — ${(qOrder.items || []).map((i) => i.name).join(" + ")} — الإجمالي ${fmtMoney(qOrder.total, qOrder.currency)} — الحالة: ${statusAr}`;
             } else {
               reply = `ما لقيت طلب بهذا الرقم يا غالي 🤔 تأكد من الرقم (مثال: ord_abc123) أو ابعت "أريد موظف" للمساعدة.`;
             }
@@ -604,26 +605,27 @@ async function processWebhookBody(body) {
                 order = await createOrder({
                   tenantId: tenant.id, phone: from, name,
                   items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
-                  total, currency: "USD",
+                  total, currency: tenantCurrency(tenant),
                 });
                 isNew = true;
               } else {
                 total = order.total; // التزم بإجمالي الطلب الأصلي
                 console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه بدل الجديد`);
               }
+              const cur = fmtMoney(total, order.currency);
               // دفع بالمحافظ/CliQ حصراً — لا روابط دفع أبداً: تحويل + لقطة شاشة + تحقق
               const wallets = tenant.features?.paymentWallets || [];
               if (wallets.length) {
                 const lines = wallets.map((w) => `• ${w.type}: ${w.number}${w.name ? ` (${w.name})` : ""}`).join("\n");
-                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
-                console.log(`  💳 طلب ${order.id} $${total} -> محافظ`);
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي ${cur}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
+                console.log(`  💳 طلب ${order.id} ${cur} -> محافظ`);
               } else {
                 const cliq = tenant.features?.cliq;
                 const instructions = cliq?.number
-                  ? `حوّل $${total} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
+                  ? `حوّل ${cur} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
                   : `ابعت "أريد موظف" ليعطيك رقم التحويل (CliQ/محفظة)`;
-                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي $${total}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
-                console.log(`  💳 طلب ${order.id} $${total} -> تحويل يدوي`);
+                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي ${cur}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
+                console.log(`  💳 طلب ${order.id} ${cur} -> تحويل يدوي`);
               }
               if (isNew) {
                 logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});

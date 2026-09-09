@@ -409,6 +409,12 @@
 const $ = (id) => document.getElementById(id);
 // XSS guard: escape all server-controlled strings before injecting into HTML.
 const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+// العملة: دينار افتراضياً — الدولار فقط إذا الطلب نفسه مسجل USD
+const money = (n, cur) => {
+  const c = String(cur || "JOD").toUpperCase();
+  if (c === "USD" || c === "$") return "$" + n;
+  return n + " د.أ";
+};
 let cur = { tenant: "", phone: "" };
 let lastSeen = 0;
 const isPortal = location.pathname.startsWith("/portal");
@@ -699,7 +705,7 @@ async function loadOrders() {
     const d = document.createElement("div");
     d.className = "border rounded p-2 text-sm";
     const b = document.createElement("b"); b.textContent = o.id; d.appendChild(b);
-    d.appendChild(document.createTextNode(" — " + o.phone + " — $" + o.total + " — " + o.status));
+    d.appendChild(document.createTextNode(" — " + o.phone + " — " + money(o.total, o.currency) + " — " + o.status));
     if (o.proof) { const s = document.createElement("span"); s.className = "text-green-600"; s.textContent = " 📸 لقطة مرفقة"; d.appendChild(s); }
     if (o.status === "pending" || o.status === "proof_received" || o.status === "pending_review") {
       const btn = document.createElement("button");
@@ -782,7 +788,7 @@ async function loadReport() {
   grid.className = "grid grid-cols-2 md:grid-cols-4 gap-2 text-center";
   const stats = [
     [Number(j.messagesHandled || 0), "رسالة"],
-    ["$" + Number(j.orders?.revenue || 0), "مدفوعات (" + Number(j.orders?.paid || 0) + "/" + Number(j.orders?.count || 0) + ")"],
+    [money(Number(j.orders?.revenue || 0), "JOD"), "مدفوعات (" + Number(j.orders?.paid || 0) + "/" + Number(j.orders?.count || 0) + ")"],
     [Number(j.bookings || 0), "حجوزات"],
     [j.csat?.avg ?? "—", "تقييم (" + Number(j.csat?.count || 0) + ")"],
   ];

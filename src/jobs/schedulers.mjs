@@ -1,6 +1,6 @@
 import { getTenantFull, isTenantActive } from "../../tenants.mjs";
 import { dueReminders, markReminded } from "../../bookings.mjs";
-import { dueCartRemindersAll, markCartReminded } from "../../orders.mjs";
+import { dueCartRemindersAll, markCartReminded, fmtMoney } from "../../orders.mjs";
 import { logEvent } from "../../crm.mjs";
 import { sendWhatsAppMessage } from "../whatsapp/sender.mjs";
 import { pushHistory } from "../memory/conversations.mjs";
@@ -39,9 +39,9 @@ export function startSchedulers() {
           const first = list[0];
           const tenant = await getTenantFull(first.tenantId);
           if (!tenant || !isTenantActive(tenant)) continue;
-          const lines = list.map((o) => `• ${o.id} ($${o.total})${o.paymentUrl ? ` — ${o.paymentUrl}` : ""}`).join("\n");
+          const lines = list.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
           const msg = list.length === 1
-            ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} ($${first.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${first.paymentUrl || "ابعت تم للتأكيد"}`
+            ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} (${fmtMoney(first.total, first.currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
             : `يا هلا يا بطل! 👋 عندك ${list.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
           try {
             await sendWhatsAppMessage(first.phone, msg, tenant);

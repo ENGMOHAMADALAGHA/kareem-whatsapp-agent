@@ -1,4 +1,4 @@
-import { getPublicOrder, markOrderPaid } from "../../../orders.mjs";
+import { getPublicOrder, markOrderPaid, fmtMoney } from "../../../orders.mjs";
 import { getTenantFull } from "../../../tenants.mjs";
 import { sendWhatsAppMessage } from "../../whatsapp/sender.mjs";
 import { pushHistory } from "../../memory/conversations.mjs";
@@ -33,7 +33,7 @@ export async function finalizePaidOrder(orderId, source = "manual", opts = {}) {
     notifyOwner(
       await getTenantFull(order.tenantId),
       "payment",
-      `💰 دفع مؤكد: طلب ${order.id} — $${order.total} من ${order.phone} (${source === "receipt-ai" ? "تحقق تلقائي" : "يدوي"})`
+      `💰 دفع مؤكد: طلب ${order.id} — ${fmtMoney(order.total, order.currency)} من ${order.phone} (${source === "receipt-ai" ? "تحقق تلقائي" : "يدوي"})`
     ).catch(() => {});
   } catch { /* أفضل-جهد */ }
   const tenant = await getTenantFull(order.tenantId);

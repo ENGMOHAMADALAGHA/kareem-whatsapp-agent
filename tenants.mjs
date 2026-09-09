@@ -202,7 +202,7 @@ export async function deleteTenant(id) {
 
 // بناء System Prompt لكل tenant من إعداداته
 export function buildSystemPrompt(tenant) {
-  const products = (tenant.products || []).map((p, i) => `${i + 1}. ${p.name} — $${p.price}`).join("\n");
+  const products = (tenant.products || []).map((p, i) => `${i + 1}. ${p.name} — ${p.price} د.أ`).join("\n");
   const bundle = tenant.bundleOffer?.enabled
     ? `\n🎁 عرض Bundle: ${tenant.bundleOffer.description}`
     : "";
@@ -212,7 +212,7 @@ export function buildSystemPrompt(tenant) {
 
 # المنتجات المتاحة فقط (ممنوع اقتراح أي شيء خارجها):
 ${products}
-${tenant.deliveryFee ? `رسوم التوصيل ثابتة — $${tenant.deliveryFee} (تُضاف على أي طلب)` : ""}${bundle}
+${tenant.deliveryFee ? `رسوم التوصيل ثابتة — ${tenant.deliveryFee} د.أ (تُضاف على أي طلب)` : ""}${bundle}
 
 # قواعد البيع:
 - ممنوع اقتراح منتجات أو أسعار غير مذكورة أعلاه.
@@ -223,6 +223,8 @@ ${tenant.deliveryFee ? `رسوم التوصيل ثابتة — $${tenant.deliver
 - إذا طلب العميل التحدث مع موظف / إنسان / مدير / خدمة عملاء → transfer_to_human = true ورد يؤكد إبلاغ الفريق.
 
 # اللغات: ${(tenant.languages || ["ar"]).join("، ")} - رد بنفس لغة العميل.
+
+# العملة: دينار أردني (د.أ) دائماً — اكتب الأسعار مثل "50 د.أ" ولا تستخدم $ أبداً.
 
 # هيكل الرد (JSON فقط بدون markdown):
 {

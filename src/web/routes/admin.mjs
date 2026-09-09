@@ -27,6 +27,7 @@ import {
   dueCartReminders,
   dueCartRemindersAll,
   markCartReminded,
+  fmtMoney,
 } from "../../../orders.mjs";
 import { logEvent, listEvents, toCSV } from "../../../crm.mjs";
 import {
@@ -265,7 +266,7 @@ export function registerAdminRoutes(app) {
     const { getTenantFull } = await import("../../../tenants.mjs");
     const tenant = await getTenantFull(tenantId);
     const { pushHistory } = await import("../../memory/conversations.mjs");
-    const msg = `تم استلام الدفع يا بطل ✅ طلبك ${order.id} ($${order.total}) تأكد وبتجهز هلا للتوصيل. شكراً لثقتك!`;
+    const msg = `تم استلام الدفع يا بطل ✅ طلبك ${order.id} (${fmtMoney(order.total, order.currency)}) تأكد وبتجهز هلا للتوصيل. شكراً لثقتك!`;
     if (tenant) {
       await sendWhatsAppMessage(order.phone, msg, tenant).catch(() => {});
       await pushHistory(order.phone, "assistant", msg, tenant);
@@ -399,9 +400,9 @@ export function registerAdminRoutes(app) {
       const first = list[0];
       const tenant = await getTenantFull(first.tenantId);
       if (!tenant) continue;
-      const lines = list.map((o) => `• ${o.id} ($${o.total})`).join("\n");
+      const lines = list.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
       const msg = list.length === 1
-        ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} ($${first.total}) لسه ما اكتمل. تحب نكمله؟ رابط الدفع: ${first.paymentUrl || "ابعت تم للتأكيد"}`
+        ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} (${fmtMoney(first.total, first.currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
         : `يا هلا يا بطل! 👋 عندك ${list.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
       try {
         await sendWhatsAppMessage(first.phone, msg, tenant);

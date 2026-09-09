@@ -17,7 +17,7 @@ const tenants = [
       { name: "حزام دعم الظهر", price: 20, image: "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=800", buttonId: "buy_belt" },
     ],
     deliveryFee: 5,
-    bundleOffer: { enabled: true, price: 70, description: "الحذاء + الحزام بـ $70 شامل التوصيل (توفير $5)" },
+    bundleOffer: { enabled: true, price: 70, description: "الحذاء + الحزام بـ 70 د.أ شامل التوصيل (توفير 5 د.أ)" },
     tone: "أردنية عامية خفيفة + ودود + يا هلا والله يا بطل + كريم معك خطوة بخطوة 👟",
     languages: ["ar", "en"],
     features: { buttons: true, images: true, booking: false },
