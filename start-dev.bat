@@ -32,6 +32,6 @@ if not exist "node_modules\electron" (
   echo.
 )
 
-echo [INFO] Launching Wasl Command Center (desktop app)...
-call npx electron .
-pause
+echo [INFO] Launching Wasl Command Center hidden (see logs\desktop.log)...
+wscript "%~dp0Wasl-Desktop.vbs"
+exit
