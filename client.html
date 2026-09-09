@@ -1,0 +1,331 @@
+<!doctype html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بوابة العميل — وصل</title>
+<script src="/assets/tailwind.js"></script>
+<style>
+  body { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; }
+  .kpi { border-radius: 1rem; padding: 1rem; color: #fff; box-shadow: 0 10px 25px -8px rgba(15,23,42,.25); }
+  .tabbtn { padding: .55rem 1.1rem; border-radius: .8rem; font-weight: 700; font-size: .875rem; color: #475569; background: #fff; box-shadow: 0 2px 8px rgba(15,23,42,.08); }
+  .tabbtn.on { background: linear-gradient(135deg,#2563eb,#1e40af); color: #fff; }
+  .card { background: #fff; border-radius: 1rem; box-shadow: 0 10px 25px -8px rgba(15,23,42,.15); }
+  .msg-u { background: #dcfce7; margin-inline-start: auto; }
+  .msg-a { background: #f1f5f9; margin-inline-end: auto; }
+  .field { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .55rem .7rem; font-size: .875rem; }
+  .field:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px #bfdbfe; }
+  .btn-p { background: linear-gradient(135deg,#2563eb,#1e40af); color: #fff; font-weight: 700; border-radius: .7rem; padding: .6rem 1.2rem; }
+  .btn-g { background: linear-gradient(135deg,#059669,#065f46); color: #fff; font-weight: 700; border-radius: .7rem; padding: .45rem 1rem; font-size: .8rem; }
+  .btn-s { background: #f1f5f9; font-weight: 700; border-radius: .7rem; padding: .45rem 1rem; font-size: .8rem; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } }
+  .fade { animation: fadeUp .25s ease; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+<div class="max-w-5xl mx-auto p-4">
+
+  <!-- ترويسة العميل -->
+  <header class="card p-4 mb-4 flex items-center gap-3">
+    <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl text-white" style="background:linear-gradient(135deg,#2563eb,#1e1b4b)">🤖</div>
+    <div class="flex-1">
+      <h1 class="font-extrabold text-lg" id="botTitle">بوابة العميل</h1>
+      <p class="text-xs text-slate-500">مدعوم من <b>وصل Wasl</b> Command Center</p>
+    </div>
+    <button id="logoutBtn" class="btn-s hidden">خروج</button>
+  </header>
+
+  <!-- الدخول -->
+  <div id="loginCard" class="card p-6 max-w-md mx-auto space-y-3">
+    <h2 class="font-bold text-lg text-center">🔐 دخول بوابتك</h2>
+    <input id="liTenant" class="field" placeholder="معرف البوت (مثال: kareem-sport)">
+    <input id="liPhone" class="field" placeholder="رقم الجوال" dir="ltr">
+    <input id="liPass" type="password" class="field" placeholder="كلمة السر">
+    <button id="liGo" class="btn-p w-full">دخول</button>
+    <button id="liForgotBtn" class="w-full text-xs text-blue-600">نسيت كلمة السر؟</button>
+    <div id="forgotBox" class="hidden space-y-2 border-t pt-2">
+      <button id="forgotSend" class="btn-s w-full">إرسال رمز واتساب</button>
+      <input id="forgotCode" class="field" placeholder="الرمز المستلم" dir="ltr">
+      <input id="forgotNew" type="password" class="field" placeholder="كلمة جديدة (6 أحرف+)">
+      <button id="forgotDo" class="btn-p w-full">تعيين الكلمة</button>
+    </div>
+    <div id="liMsg" class="text-xs text-red-500 text-center"></div>
+  </div>
+
+  <!-- اللوحة -->
+  <div id="dash" class="hidden space-y-4">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="kpis"></div>
+    <div class="flex gap-2 flex-wrap" id="ctabs">
+      <button data-t="inbox" class="tabbtn on">📥 المحادثات</button>
+      <button data-t="orders" class="tabbtn">🧾 الطلبات</button>
+      <button data-t="booking" class="tabbtn">📅 الحجوزات</button>
+      <button data-t="ratings" class="tabbtn">⭐ التقييمات</button>
+    </div>
+    <div id="pane-inbox" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="card p-3">
+        <h3 class="font-bold mb-2">المحادثات <span id="cCount" class="text-xs text-slate-500"></span></h3>
+        <div id="cList" class="space-y-2 max-h-[60vh] overflow-auto"></div>
+      </div>
+      <div class="card p-3 md:col-span-2 flex flex-col">
+        <div class="flex items-center gap-2 mb-2">
+          <h3 id="cTitle" class="font-bold">اختر محادثة</h3>
+          <button id="cTakeover" class="hidden text-xs px-2 py-1 rounded bg-amber-100">⏸️ إيقاف للموظف</button>
+        </div>
+        <div id="cMsgs" class="flex-1 space-y-2 max-h-[50vh] overflow-auto mb-2"></div>
+        <div class="flex gap-2">
+          <input id="cReply" class="flex-1 field" placeholder="رد الموظف...">
+          <button id="cSend" class="btn-p">إرسال</button>
+        </div>
+      </div>
+    </div>
+    <div id="pane-orders" class="hidden card p-3"><h3 class="font-bold mb-2">الطلبات</h3><div id="cOrders" class="space-y-2"></div></div>
+    <div id="pane-booking" class="hidden card p-3"><h3 class="font-bold mb-2">الحجوزات</h3><div id="cBooking" class="space-y-2"></div></div>
+    <div id="pane-ratings" class="hidden card p-3"><h3 class="font-bold mb-2">التقييمات</h3><div id="cRatings"></div></div>
+  </div>
+</div>
+<div id="toastBox" style="position:fixed;bottom:1rem;inset-inline:0;display:flex;flex-direction:column;align-items:center;gap:.4rem;z-index:100;pointer-events:none"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("portalToken") || "";
+let cur = { phone: "", tenant: "" };
+let takeoverState = false;
+
+const money = (n, c) => {
+  const cur2 = String(c || "JOD").toUpperCase();
+  return (cur2 === "USD" || cur2 === "$") ? "$" + n : n + " د.أ";
+};
+function toast(msg, kind) {
+  const colors = { success: "#059669", error: "#dc2626", info: "#2563eb" };
+  const el = document.createElement("div");
+  el.style.cssText = "background:" + (colors[kind] || colors.info) + ";color:#fff;font-size:.8rem;font-weight:700;padding:.55rem 1.1rem;border-radius:.8rem;box-shadow:0 10px 25px -8px rgba(0,0,0,.4);max-width:90vw";
+  el.textContent = msg;
+  $("toastBox").appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 320); }, 3200);
+}
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if (token) opts.headers["Authorization"] = "Bearer " + token;
+  const r = await fetch(path, opts);
+  if (r.status === 401) { logout(); throw new Error("انتهت الجلسة — سجل دخولك مجدداً"); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+function logout() {
+  token = "";
+  localStorage.removeItem("portalToken");
+  $("dash").classList.add("hidden");
+  $("logoutBtn").classList.add("hidden");
+  $("loginCard").classList.remove("hidden");
+}
+function tenantFromToken() {
+  try { return JSON.parse(atob(token.split(".")[1])).tenantId || ""; }
+  catch (e) { return ""; }
+}
+
+// ── الدخول ──
+async function doLogin() {
+  const tenantId = $("liTenant").value.trim(), phone = $("liPhone").value.trim(), password = $("liPass").value;
+  if (!tenantId || !phone || !password) { $("liMsg").textContent = "عبّئ الحقول الثلاثة"; return; }
+  try {
+    const j = await (await fetch("/portal/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone, password }) })).json();
+    if (!j.ok) throw new Error(j.error || "فشل الدخول");
+    token = j.token;
+    localStorage.setItem("portalToken", token);
+    enter();
+  } catch (e) { $("liMsg").textContent = e.message; }
+}
+function enter() {
+  cur.tenant = tenantFromToken();
+  $("loginCard").classList.add("hidden");
+  $("dash").classList.remove("hidden");
+  $("logoutBtn").classList.remove("hidden");
+  $("botTitle").textContent = "بوابة " + cur.tenant;
+  refreshAll();
+}
+$("liGo").onclick = doLogin;
+$("liPass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
+$("logoutBtn").onclick = () => { logout(); toast("تم الخروج", "info"); };
+$("liForgotBtn").onclick = () => $("forgotBox").classList.toggle("hidden");
+$("forgotSend").onclick = async () => {
+  const tenantId = $("liTenant").value.trim(), phone = $("liPhone").value.trim();
+  if (!tenantId || !phone) { $("liMsg").textContent = "أدخل البوت والجوال أولاً"; return; }
+  await fetch("/portal/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone }) });
+  toast("أُرسل الرمز واتساب", "info");
+};
+$("forgotDo").onclick = async () => {
+  const tenantId = $("liTenant").value.trim(), phone = $("liPhone").value.trim();
+  const j = await (await fetch("/portal/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone, code: $("forgotCode").value.trim(), newPassword: $("forgotNew").value }) })).json();
+  $("liMsg").textContent = j.ok ? "تم ✅ سجل دخولك" : (j.error || "فشل");
+};
+
+// ── التبويبات ──
+document.querySelectorAll("#ctabs button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#ctabs button").forEach((x) => x.classList.remove("on"));
+    b.classList.add("on");
+    ["inbox", "orders", "booking", "ratings"].forEach((t) => $("pane-" + t).classList.add("hidden"));
+    $("pane-" + b.dataset.t).classList.remove("hidden");
+  };
+});
+
+// ── البيانات ──
+async function loadReport() {
+  try {
+    const j = await api("/admin/report?tenant=" + encodeURIComponent(cur.tenant));
+    const box = $("kpis");
+    box.innerHTML = "";
+    const items = [
+      [j.messagesHandled || 0, "💬 رسالة", "linear-gradient(135deg,#2563eb,#1e40af)"],
+      [money(Number(j.orders?.revenue || 0), "JOD"), "💰 مدفوعات", "linear-gradient(135deg,#059669,#065f46)"],
+      [j.bookings || 0, "📅 حجوزات", "linear-gradient(135deg,#7c3aed,#4c1d95)"],
+      [j.csat?.avg ?? "—", "⭐ تقييم", "linear-gradient(135deg,#d97706,#92400e)"],
+    ];
+    items.forEach(([v, l, g]) => {
+      const d = document.createElement("div");
+      d.className = "kpi fade";
+      d.style.background = g;
+      const n = document.createElement("div");
+      n.style.cssText = "font-size:1.5rem;font-weight:800";
+      n.textContent = String(v);
+      const lb = document.createElement("div");
+      lb.style.fontSize = ".75rem";
+      lb.textContent = l;
+      d.append(n, lb);
+      box.appendChild(d);
+    });
+  } catch (e) { /* تُعرض عند التحديث القادم */ }
+}
+async function loadInbox() {
+  try {
+    const j = await api("/admin/inbox?tenant=" + encodeURIComponent(cur.tenant));
+    $("cCount").textContent = "(" + j.count + ")";
+    const box = $("cList");
+    box.innerHTML = "";
+    j.inbox.forEach((c) => {
+      const d = document.createElement("div");
+      d.className = "border rounded p-2 cursor-pointer hover:bg-slate-50 fade" + (c.phone === cur.phone ? " border-blue-500" : "");
+      const t = document.createElement("div");
+      t.className = "font-bold text-sm";
+      t.textContent = (c.phone || "") + (c.takeover ? " ⏸️" : "");
+      const s = document.createElement("div");
+      s.className = "text-xs text-slate-500";
+      s.textContent = (c.lastMessage ? c.lastMessage.text : "");
+      d.append(t, s);
+      d.onclick = () => { cur.phone = c.phone; loadConv(); };
+      box.appendChild(d);
+    });
+  } catch (e) { /* صامت دوري */ }
+}
+async function loadConv() {
+  if (!cur.phone) return;
+  try {
+    const j = await api("/admin/inbox/" + encodeURIComponent(cur.tenant) + "/" + encodeURIComponent(cur.phone));
+    $("cTitle").textContent = cur.phone;
+    takeoverState = !!j.takeover;
+    const tb = $("cTakeover");
+    tb.classList.remove("hidden");
+    tb.textContent = takeoverState ? "▶ تشغيل البوت" : "⏸️ إيقاف للموظف";
+    const box = $("cMsgs");
+    box.innerHTML = "";
+    (j.messages || []).forEach((m) => {
+      const d = document.createElement("div");
+      d.className = "rounded p-2 max-w-[85%] text-sm fade " + (m.role === "user" ? "msg-u" : "msg-a");
+      d.textContent = m.text ?? "";
+      box.appendChild(d);
+    });
+    box.scrollTop = box.scrollHeight;
+  } catch (e) { toast("تعذر تحميل المحادثة", "error"); }
+}
+$("cTakeover").onclick = async () => {
+  try {
+    await api("/admin/takeover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone: cur.phone, enabled: !takeoverState }) });
+    toast(takeoverState ? "البوت يعمل ✅" : "البوت موقوف ⛔", "info");
+    loadConv(); loadInbox();
+  } catch (e) { toast("فشلت العملية", "error"); }
+};
+async function sendReply() {
+  const t = $("cReply").value.trim();
+  if (!t || !cur.phone) { toast("اختر محادثة أولاً", "error"); return; }
+  try {
+    await api("/admin/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone: cur.phone, text: t }) });
+    $("cReply").value = "";
+    loadConv();
+  } catch (e) { toast("فشل الإرسال", "error"); }
+}
+$("cSend").onclick = sendReply;
+$("cReply").onkeydown = (e) => { if (e.key === "Enter") sendReply(); };
+async function loadOrders() {
+  try {
+    const j = await api("/admin/orders?tenant=" + encodeURIComponent(cur.tenant));
+    const box = $("cOrders");
+    box.innerHTML = "";
+    if (!j.orders.length) { box.innerHTML = "<p class='text-slate-400'>لا طلبات</p>"; return; }
+    j.orders.forEach((o) => {
+      const d = document.createElement("div");
+      d.className = "border rounded p-2 text-sm fade";
+      const b = document.createElement("b");
+      b.textContent = o.id;
+      d.appendChild(b);
+      const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة 🔍", canceled: "ملغي" }[o.status] || o.status;
+      d.appendChild(document.createTextNode(" — " + money(o.total, o.currency) + " — " + statusAr));
+      if (o.status === "pending" || o.status === "proof_received" || o.status === "pending_review") {
+        d.appendChild(document.createTextNode(" "));
+        const btn = document.createElement("button");
+        btn.className = "text-green-600 text-xs font-bold";
+        btn.textContent = "✔ تأكيد الدفع";
+        btn.onclick = async () => {
+          try {
+            await api("/admin/orders/" + encodeURIComponent(o.id) + "/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+            toast("تم تأكيد الدفع ✅", "success");
+            loadOrders();
+          } catch (e) { toast("فشل التأكيد", "error"); }
+        };
+        d.appendChild(btn);
+      }
+      box.appendChild(d);
+    });
+  } catch (e) { /* صامت */ }
+}
+async function loadBooking() {
+  try {
+    const j = await api("/admin/appointments?tenant=" + encodeURIComponent(cur.tenant));
+    const box = $("cBooking");
+    box.innerHTML = "";
+    if (!j.appointments.length) { box.innerHTML = "<p class='text-slate-400'>لا حجوزات</p>"; return; }
+    j.appointments.forEach((b) => {
+      const d = document.createElement("div");
+      d.className = "border rounded p-2 text-sm fade";
+      d.textContent = (b.service || "موعد") + " — " + (b.phone || "") + " — " + (b.slot || "") + " — " + (b.status || "");
+      box.appendChild(d);
+    });
+  } catch (e) { /* صامت */ }
+}
+async function loadRatings() {
+  try {
+    const j = await api("/admin/csat?tenant=" + encodeURIComponent(cur.tenant));
+    const box = $("cRatings");
+    box.innerHTML = "";
+    const avg = document.createElement("div");
+    avg.className = "mb-2";
+    avg.textContent = "المتوسط: " + (j.avg ?? "—") + " من " + (j.count || 0) + " تقييم";
+    box.appendChild(avg);
+  } catch (e) { /* صامت */ }
+}
+function refreshAll() {
+  loadReport(); loadInbox(); loadOrders(); loadBooking(); loadRatings();
+  if (cur.phone) loadConv();
+}
+(function boot() {
+  try {
+    const q = new URLSearchParams(location.search);
+    const pre = q.get("tenant");
+    if (pre) $("liTenant").value = pre;
+  } catch (e) { /* تجاهل */ }
+  if (token && tenantFromToken()) enter();
+  setInterval(() => { if (token && !document.hidden) { loadInbox(); if (cur.phone) loadConv(); } }, 8000);
+})();
+</script>
+</body>
+</html>

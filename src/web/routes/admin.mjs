@@ -460,7 +460,7 @@ export function registerAdminRoutes(app) {
     res.sendFile(ADMIN_HTML);
   });
   app.get("/portal/", (req, res) => {
-    res.sendFile(ADMIN_HTML);
+    res.sendFile(path.join(ADMIN_HTML, "..", "client.html"));
   });
   app.get("/admin/inbox.html", (req, res) => {
     res.send(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>Inbox</title>

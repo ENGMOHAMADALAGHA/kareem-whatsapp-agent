@@ -43,9 +43,9 @@ export function createApp() {
     res.sendFile(path.join(__dirname, "..", "..", "admin.html"));
   });
 
-  // ── بوابة العميل (صفحة دخول + لوحة مقفلة على بوته) ──
+  // ── بوابة العميل: واجهة GUI مستقلة (client.html) مقفلة على بوته ──
   app.get("/portal/", (req, res) => {
-    res.sendFile(path.join(__dirname, "..", "..", "admin.html"));
+    res.sendFile(path.join(__dirname, "..", "..", "client.html"));
   });
 
   registerAdminRoutes(app);
