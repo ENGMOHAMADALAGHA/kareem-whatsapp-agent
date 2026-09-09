@@ -36,7 +36,11 @@
       "assets/**/*",
       "package.json"
     ],
-    "win": { "target": ["nsis"] }
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
@@ -51,6 +55,7 @@
     "prisma": "^7.10.0"
   },
   "devDependencies": {
-    "electron": "^44.2.0"
+    "electron": "^44.2.0",
+    "puppeteer": "^25.10.0"
   }
 }
