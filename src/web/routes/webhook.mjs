@@ -86,8 +86,13 @@ export function registerWebhookRoutes(app) {
     // رد فوري لواتساب (يمنع إعادة الإرسال = يمنع الرد المكرر)
     res.status(200).send("EVENT_RECEIVED");
 
-    // المعالجة عبر الطابور (تزامن محدود + إعادة + توثيق الميت)
-    webhookQueue.enqueue(`webhook:${body.entry?.[0]?.id || "event"}`, () => processWebhookBody(body));
+    // المعالجة عبر الطابور — مرتبة FIFO لكل مرسل (رسائل نفس الزبون لا تتسابق)
+    let senderKey = "unknown";
+    try {
+      const firstMsg = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+      if (firstMsg?.from) senderKey = `sender:${firstMsg.from}`;
+    } catch { /* مفتاح افتراضي */ }
+    webhookQueue.enqueueOrdered(senderKey, `webhook:${body.entry?.[0]?.id || "event"}`, () => processWebhookBody(body));
   });
 }
 
@@ -550,7 +555,19 @@ async function processWebhookBody(body) {
           }
 
           // —— المسار العادي: AI ——
-          result = await processCustomerMessage(text, from, tenant);
+          // بعد التصعيد: رد حتمي قصير بدل يانصيب الذكاء (لا تحية عشوائية لـ "؟" بعد طلب موظف)
+          const { storeGet: sg2 } = await import("../../../store.mjs");
+          const escActive = await sg2(`esc:${tenant?.id}::${from}`).catch(() => null);
+          if (escActive) {
+            result = {
+              reply: "طلبك عند الفريق يا غالي 🙏 بيرد عليك بأقرب وقت. كريم معك خطوة بخطوة 👟",
+              transfer_to_human: true,
+              intent: "تصعيد",
+            };
+            console.log(`  🤖 ${tenant?.botName || "كريم"} -> تصعيد مستمر (رد حتمي، بلا AI)`);
+          } else {
+            result = await processCustomerMessage(text, from, tenant);
+          }
 
           console.log(`  🤖 ${tenant?.botName || "كريم"} -> intent=${result.intent} transfer=${result.transfer_to_human}`);
           console.log(`  💬 الرد: "${result.reply}"`);

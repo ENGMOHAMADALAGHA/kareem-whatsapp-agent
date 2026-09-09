@@ -53,22 +53,39 @@ export function createQueue({ concurrency = 5, retries = 2, timeoutMs = 60000, o
     return Promise.resolve().then(() => Promise.race([fn(), timeout])).finally(() => clearTimeout(timer));
   }
 
+  // شغّل مهمة وانتظر نتيجتها (للاستخدام داخل معالج آخر، مثل طابور الفويس)
+  function runJob(label, fn) {
+    return new Promise((resolve, reject) => {
+      pending.push({
+        label, fn, attempts: 0, at: Date.now(),
+        done: resolve, fail: reject,
+      });
+      setImmediate(pump);
+    });
+  }
+
+  // سلسلة FIFO لكل مرسل: رسائل نفس الرقم تُعالج بالترتيب strictly —
+  // تمنع سباق السياق (رد على "؟" بتحية بينما طلب الموظف قيد المعالجة)
+  const tails = new Map(); // key -> Promise
+  function enqueueOrdered(key, label, fn) {
+    const prev = tails.get(key) || Promise.resolve();
+    const next = prev.catch(() => {}).then(() => runJob(label, fn));
+    tails.set(key, next);
+    next.then(
+      () => { if (tails.get(key) === next) tails.delete(key); },
+      () => { if (tails.get(key) === next) tails.delete(key); }
+    );
+    return next;
+  }
+
   return {
     enqueue(label, fn) {
       pending.push({ label, fn, attempts: 0, at: Date.now() });
       setImmediate(pump);
       return pending.length;
     },
-    // شغّل مهمة وانتظر نتيجتها (للاستخدام داخل معالج آخر، مثل طابور الفويس)
-    run(label, fn) {
-      return new Promise((resolve, reject) => {
-        pending.push({
-          label, fn, attempts: 0, at: Date.now(),
-          done: resolve, fail: reject,
-        });
-        setImmediate(pump);
-      });
-    },
+    enqueueOrdered,
+    run: runJob,
     stats() {
       return { queued: pending.length, running, done, dead, concurrency, retries, backend: "memory" };
     },
@@ -127,6 +144,9 @@ export function createDurableQueue(name, opts = {}) {
     },
     run(label, fn) {
       return mem.run(label, fn);
+    },
+    enqueueOrdered(key, label, fn) {
+      return mem.enqueueOrdered(key, label, fn);
     },
     stats() {
       const s = mem.stats();
