@@ -62,6 +62,16 @@ export function signClientToken(user) {
   );
 }
 
+// توكن معاينة قصير (10 دقائق) — السوبر أدمن يشوف بوابة العميل كما يراها تماماً
+// يُستخدم للعروض التقديمية فقط، ويُحترم نفس عزل الـ JWT العادي
+export function signPreviewToken(tenantId) {
+  return jwt.sign(
+    { sub: `preview:${tenantId}`, tenantId, phone: "preview", role: "client", preview: true },
+    secret(),
+    { expiresIn: "10m" }
+  );
+}
+
 export function verifyClientToken(token) {
   try {
     const p = jwt.verify(token, secret());

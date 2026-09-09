@@ -318,11 +318,25 @@ function refreshAll() {
   if (cur.phone) loadConv();
 }
 (function boot() {
+  let previewMode = false;
   try {
     const q = new URLSearchParams(location.search);
     const pre = q.get("tenant");
     if (pre) $("liTenant").value = pre;
+    // وضع المعاينة: توكن مؤقت من السوبر أدمن (عروض تقديمية) — 10 دقائق
+    const pv = q.get("preview");
+    if (pv) {
+      token = pv;
+      localStorage.setItem("portalToken", token);
+      previewMode = true;
+    }
   } catch (e) { /* تجاهل */ }
+  if (previewMode) {
+    const badge = document.createElement("div");
+    badge.style.cssText = "position:fixed;top:.6rem;inset-inline:0;margin-inline:auto;width:fit-content;background:#7c3aed;color:#fff;font-size:.72rem;font-weight:800;padding:.3rem .9rem;border-radius:999px;z-index:200;box-shadow:0 8px 20px -6px rgba(0,0,0,.4)";
+    badge.textContent = "👁 وضع المعاينة — كما يراه العميل (10 دقائق)";
+    document.body.appendChild(badge);
+  }
   if (token && tenantFromToken()) enter();
   setInterval(() => { if (token && !document.hidden) { loadInbox(); if (cur.phone) loadConv(); } }, 8000);
 })();

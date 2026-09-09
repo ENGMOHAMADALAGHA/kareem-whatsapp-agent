@@ -109,6 +109,21 @@ export function registerAdminRoutes(app) {
       res.status(400).json({ ok: false, error: e.message });
     }
   });
+  // معاينة منظور العميل (سوبر فقط): رابط بوابة مؤقت 10 دقائق لنفس البوت
+  // للعروض التقديمية — العميل يرى بوابته بالضبط، بنفس العزل الكامل
+  app.get("/admin/preview/:tenantId", async (req, res) => {
+    if (!req.isSuperAdmin) {
+      return res.status(403).json({ ok: false, error: "المعاينة للسوبر أدمن فقط" });
+    }
+    const t = await getTenantFull(req.params.tenantId);
+    if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const { signPreviewToken } = await import("../../../portal.mjs");
+    const { PUBLIC_BASE_URL } = await import("../../config/env.mjs");
+    const base = (PUBLIC_BASE_URL || "").replace(/\/$/, "");
+    const url = `/portal/?tenant=${encodeURIComponent(t.id)}&preview=${encodeURIComponent(signPreviewToken(t.id))}`;
+    logEvent("preview", { tenantId: t.id }).catch(() => {});
+    res.json({ ok: true, tenantId: t.id, url, absoluteUrl: base ? base + url : url, expiresIn: "10m" });
+  });
   // حذف بوت (سوبر فقط عبر SUPER_ONLY) — الحذف متتالٍ لكل بياناته
   app.delete("/admin/tenants/:id", async (req, res) => {
     try {

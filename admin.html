@@ -205,6 +205,7 @@
     <header class="topbar">
       <div class="page-title" id="pageTitle">المحادثات</div>
       <span id="deskChip" class="desk-chip hidden">🖥 تطبيق سطح المكتب</span>
+      <button id="previewBtn" class="text-xs px-3 py-1.5 rounded-lg text-white font-bold" style="background:linear-gradient(135deg,#7c3aed,#4c1d95)">👁 منظور العميل</button>
       <select id="tenantSel" class="mr-auto border rounded-lg p-2 text-sm bg-white"></select>
     </header>
 
@@ -400,6 +401,19 @@
       <div class="flex gap-2 mt-3">
         <button id="linkClose" class="flex-1 py-2 rounded-lg bg-slate-200 font-bold">إغلاق</button>
       </div>
+    </div>
+  </div>
+
+  <!-- نافذة منظور العميل: البوابة كما يراها العميل تماماً (عروض تقديمية) -->
+  <div id="previewModal" class="hidden glass-overlay" style="display:none">
+    <div class="wizard-card p-4" dir="rtl" style="width:64rem">
+      <div class="flex items-center gap-2 mb-2">
+        <h2 class="font-bold text-base">👁 منظور العميل — <span id="previewName"></span></h2>
+        <a id="previewOpen" href="#" target="_blank" class="mr-auto text-xs px-2 py-1 rounded bg-slate-200 font-bold">فتح بتبويب ↗</a>
+        <button id="previewClose" class="px-3 py-1 rounded-lg bg-slate-200 font-bold">✕</button>
+      </div>
+      <p class="text-xs text-slate-500 mb-2">رابط مؤقت 10 دقائق بنفس صلاحيات العميل وعزله الكامل — آمن للعرض أمام العملاء.</p>
+      <iframe id="previewFrame" title="معاينة بوابة العميل" style="width:100%;height:70vh;border:1px solid #e2e8f0;border-radius:.8rem;background:#fff"></iframe>
     </div>
   </div>
   </main>
@@ -613,6 +627,8 @@ async function loadTenants() {
     if (bb) bb.style.display = "none";
     const bn = $("botsNavBtn");
     if (bn) bn.style.display = "none";
+    const pv = $("previewBtn");
+    if (pv) pv.style.display = "none";
   }
   if (isPortal && portalToken) {
     try {
@@ -1314,6 +1330,27 @@ async function sendInvite() {
 $("linkTestBtn").onclick = testLink;
 $("linkInviteBtn").onclick = sendInvite;
 $("linkClose").onclick = closeLinkModal;
+
+// ── منظور العميل: معاينة حية للبوابة كما يراها العميل (عروض تقديمية) ──
+async function openPreview() {
+  if (!cur.tenant) { toast("اختر بوتاً أولاً", "error"); return; }
+  try {
+    toast("جاري تجهيز المعاينة...", "info");
+    const j = await api("/admin/preview/" + encodeURIComponent(cur.tenant));
+    $("previewName").textContent = cur.tenant;
+    $("previewOpen").href = j.url;
+    $("previewFrame").src = j.url;
+    $("previewModal").classList.remove("hidden");
+    $("previewModal").style.display = "flex";
+  } catch (e) { toast("تعذرت المعاينة: " + e.message, "error"); }
+}
+function closePreview() {
+  $("previewFrame").src = "about:blank";
+  $("previewModal").classList.add("hidden");
+  $("previewModal").style.display = "none";
+}
+$("previewBtn").onclick = openPreview;
+$("previewClose").onclick = closePreview;
 $("botNext").onclick = () => { if (wizValidate()) wizShow(wizStep + 1); };
 $("botBack").onclick = () => wizShow(wizStep - 1);
 $("botsRefresh").onclick = loadBots;
