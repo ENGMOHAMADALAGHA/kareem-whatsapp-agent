@@ -71,16 +71,33 @@ export async function extractReceipt(buffer, mimeType = "image/jpeg") {
 }
 
 // ── 2) مطابقة الاستخراج مع الطلب ──
-// يرجع: { match: bool, reasons: [] }
+// يرجع: { match: bool, reasons: [] } — الأسباب تقنية للسجل والموظف فقط
+// المبالغ تُطبّع للدولار قبل المقارنة (إيصالات CliQ بالأردني مقابل أسعار USD)
+const JOD_PER_USD = Number(process.env.RECEIPT_JOD_PER_USD || 0.71);
+function normCurrency(c) {
+  const s = String(c || "").toLowerCase();
+  if (/jod|jd|دينار|jordan|د\.أ/.test(s)) return "JOD";
+  if (/usd|\$|dollar|دولار/.test(s)) return "USD";
+  return null;
+}
+// 1 USD ≈ ‏0.71 JOD → للأردني نقسم (39 دينار ≈ $55)
+function toUSD(amount, currency) {
+  if (currency === "JOD") return Number(amount) / JOD_PER_USD;
+  return Number(amount);
+}
 export function verifyReceiptAgainstOrder(extracted, order, tenant) {
   const reasons = [];
   if (!extracted?.ok) {
     reasons.push("unreadable");
     return { match: false, reasons };
   }
-  // المبلغ (بتسامح بسيط لفرق العملات/التقريب)
-  const diff = Math.abs(Number(extracted.amountPaid) - Number(order.total));
-  if (diff > AMOUNT_TOLERANCE_ABS) reasons.push(`amount-mismatch (receipt=${extracted.amountPaid} order=${order.total})`);
+  // المبلغ بعد توحيد العملة (بتسامح بسيط للتقريب والعمولة)
+  const rCur = normCurrency(extracted.currency) || normCurrency(order.currency) || "USD";
+  const oCur = normCurrency(order.currency) || "USD";
+  const rUSD = toUSD(extracted.amountPaid, rCur);
+  const oUSD = toUSD(order.total, oCur);
+  const diff = Math.abs(rUSD - oUSD);
+  if (diff > AMOUNT_TOLERANCE_ABS) reasons.push(`amount-mismatch (receipt=${extracted.amountPaid}${rCur}≈$${rUSD.toFixed(2)} order=${order.total}${oCur})`);
   // المستلم: آخر 7 أرقام من أي محفظة مسجلة يجب أن تظهر في نص المستلم
   const wallets = tenant?.features?.paymentWallets || [];
   if (wallets.length && extracted.recipientIdentifier) {
@@ -130,9 +147,12 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
 
   if (match) {
     await finalizePaidOrder(order.id, "receipt-ai");
+    const paidLabel = extracted.currency
+      ? `${extracted.amountPaid} ${extracted.currency}`
+      : `$${extracted.amountPaid}`;
     const msg =
       `تم التحقق من إيصالك تلقائياً ✅\n` +
-      `🧾 الطلب ${order.id} — المبلغ المستلم $${extracted.amountPaid} (مرجع: ${extracted.referenceNumber || "—"}).\n` +
+      `🧾 الطلب ${order.id} — المبلغ المستلم ${paidLabel} (مرجع: ${extracted.referenceNumber || "—"}).\n` +
       `طلبك تأكد وبتجهز هلا للتوصيل. شكراً لثقتك! 🙏`;
     try {
       await sendWhatsAppMessage(phone, msg, tenant);
@@ -146,10 +166,23 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
   }
 
   // مشبوه/غير مطابق → مراجعة يدوية + تنبيه الموظف
+  // (التفاصيل التقنية للموظف والسجل فقط — الزبون توصله صياغة بشرية)
   await markOrderReview(order.id, tenant.id, proof);
+  const reasonArMap = {
+    "unreadable": "تعذر قراءة الإيصال بوضوح",
+    "recipient-mismatch": "رقم المستلم بالإيصال غير مطابق لأرقامنا",
+    "low-confidence": "صورة الإيصال غير واضحة كفاية",
+  };
+  const noteAr = reasons.length
+    ? reasons.map((r) => {
+        if (r.startsWith("amount-mismatch")) return "المبلغ بالإيصال مختلف عن قيمة طلبك";
+        if (r.startsWith("low-confidence")) return reasonArMap["low-confidence"];
+        return reasonArMap[r] || "تحقق إضافي";
+      }).join("، ")
+    : "تحقق إضافي";
   const msg =
-    `وصلني الإيصال يا بطل 📸 وحطيت طلبك ${order.id} قيد المراجعة اليدوية 🔍 ` +
-    `(${reasons.join("، ") || "تحقق إضافي"}).\nالموظف رح يتأكد ويبعتلك التأكيد هنا. شكراً لصبرك!`;
+    `وصلني الإيصال يا بطل 📸 بس في ملاحظة: ${noteAr}.\n` +
+    `حطيت طلبك ${order.id} قيد المراجعة 🔍 والموظف رح يتأكد ويبعتلك التأكيد هنا. شكراً لصبرك!`;
   try {
     await sendWhatsAppMessage(phone, msg, tenant);
     await pushHistory(phone, "user", "[صورة: إيصال تحويل]", tenant);
