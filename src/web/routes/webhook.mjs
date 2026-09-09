@@ -328,7 +328,7 @@ async function processWebhookBody(body) {
             result = await processCustomerMessage(map[buttonId], from, tenant);
             const prod = buttonId === "buy_shoes" ? tenant.products[0] : buttonId === "buy_belt" ? tenant.products[1] : null;
             try {
-              if (prod?.image) await sendImage(from, prod.image, `${prod.name} - $${prod.price}`, tenant);
+              if (prod?.image) await sendImage(from, prod.image, `${prod.name} - ${fmtMoney(prod.price, tenantCurrency(tenant))}`, tenant);
               await sendWhatsAppMessage(from, result.reply, tenant);
             } catch (sendErr) {
               console.error(`  ❌ فشل الإرسال: ${sendErr.message}`);

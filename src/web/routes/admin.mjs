@@ -342,7 +342,7 @@ export function registerAdminRoutes(app) {
       csat: { avg: avgCsat, count: ratings.length },
       broadcasts,
       staffHoursSaved,
-      message: `البوت رد على ${msgs} رسالة (~${staffHoursSaved} ساعة موظفين)، وحقق $${revenue} مدفوعات، بتقييم ${avgCsat || "—"}/5`,
+      message: `البوت رد على ${msgs} رسالة (~${staffHoursSaved} ساعة موظفين)، وحقق ${fmtMoney(revenue, "JOD")} مدفوعات، بتقييم ${avgCsat || "—"}/5`,
     });
   });
   app.post("/admin/csat-request", async (req, res) => {
