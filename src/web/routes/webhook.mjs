@@ -558,18 +558,16 @@ async function processWebhookBody(body) {
 
           if (result.transfer_to_human) {
             console.log(`  🚨 تنبيه: العميل ${from} طلب التصعيد للبشر!`);
-            // تصعيد ذكي: البوت يتنحى تلقائياً (takeover) حتى لا يرد فوق الموظف،
-            // وتنبيه واحد لكل محادثة كل 10 دقائق — لا سبام ولا ردود مكررة
+            // سياسة المالك: بلا تنحٍ إطلاقاً — البوت يبقى يرد دائماً، والموظف يُنبَّه فقط.
+            // تنبيه واحد لكل محادثة كل 10 دقائق (بلا سبام). الإسكات يدوي فقط بزر ⏸
             const { storeGet, storeSet } = await import("../../../store.mjs");
             const escKey = `esc:${tenant?.id}::${from}`;
             const alreadyEscalated = await storeGet(escKey).catch(() => null);
-            await setTakeover(tenant?.id, from, true, "auto-escalation").catch(() => {});
-            logEvent("takeover", { tenantId: tenant?.id, phone: from, by: "auto-escalation" }).catch(() => {});
             if (!alreadyEscalated) {
               await storeSet(escKey, { at: Date.now() }, 10 * 60 * 1000).catch(() => {});
               notifyStaff(tenant, `عميل يطلب موظفاً: ${from} (${name}) — "${text.slice(0, 120)}"`, { except: from }).catch(() => {});
             } else {
-              console.log(`  🚨 تصعيد مكرر من ${from} — البوت متنحٍ مسبقاً، بلا تنبيه جديد`);
+              console.log(`  🚨 تصعيد مكرر من ${from} — بلا تنبيه جديد`);
             }
           }
 

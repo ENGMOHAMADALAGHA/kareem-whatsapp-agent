@@ -4,8 +4,8 @@ import { getHistory } from "../memory/conversations.mjs";
 import { tenantDb, systemDb } from "../security/tenantGuard.mjs";
 
 const takeoverKey = (tenantId, phone) => `takeover:${memoryKey(tenantId, phone)}`;
-export async function setTakeover(tenantId, phone, enabled, by = "admin") {
-  if (enabled) await storeSet(takeoverKey(tenantId, phone), { by, at: Date.now() });
+export async function setTakeover(tenantId, phone, enabled, by = "admin", ttlMs = null) {
+  if (enabled) await storeSet(takeoverKey(tenantId, phone), { by, at: Date.now() }, ttlMs);
   else await storeDel(takeoverKey(tenantId, phone));
 }
 export async function isTakeover(tenantId, phone) {
