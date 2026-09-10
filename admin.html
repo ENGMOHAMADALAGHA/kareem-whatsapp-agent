@@ -249,6 +249,7 @@
   <div id="tab-booking" class="hidden bg-white rounded shadow p-3">
     <div class="flex items-center gap-2 mb-2 flex-wrap">
       <h3 class="font-bold">📅 الحجوزات</h3>
+      <button id="bkAdd" class="text-xs px-2 py-1 rounded bg-blue-600 text-white font-bold">＋ حجز يدوي</button>
       <input id="bkFrom" type="date" class="border rounded p-1 text-xs" title="من تاريخ">
       <input id="bkTo" type="date" class="border rounded p-1 text-xs" title="إلى تاريخ">
       <a id="bkExport" href="#" class="text-xs px-2 py-1 rounded bg-green-600 text-white font-bold">📥 تصدير Excel (CSV)</a>
@@ -828,8 +829,25 @@ async function remindBk(id) {
   } catch (e) { toast("فشل التذكير: " + e.message, "error"); }
 }
 
-async function rescheduleBk(id) {
-  const day = await promptDialog("نقل الحجز", "اليوم الجديد (مثال: الغد، 2026-09-15):", { placeholder: "اليوم" });
+async function addBk() {
+  const phone = await promptDialog("حجز يدوي", "رقم جوال العميل:", "9627...");
+  if (!phone) return;
+  const name = await promptDialog("حجز يدوي", "اسم العميل (اختياري):", "الاسم");
+  const service = await promptDialog("حجز يدوي", "الخدمة (مثال: تنظيف أسنان):", "موعد");
+  if (!service) return;
+  const day = await promptDialog("حجز يدوي", "اليوم (مثال: الغد):", "اليوم");
+  if (!day) return;
+  const slot = await promptDialog("حجز يدوي", "الوقت (مثال: 14:00):", "14:00");
+  if (!slot) return;
+  toast("جاري إنشاء الحجز...", "info");
+  try {
+    await api("/admin/appointments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone, name, service, day, slot }) });
+    toast("تم إنشاء الحجز ✅", "success");
+    loadBooking();
+  } catch (e) { toast("تعذر الإنشاء: " + e.message, "error"); }
+}
+
+async function rescheduleBk(id) {  const day = await promptDialog("نقل الحجز", "اليوم الجديد (مثال: الغد، 2026-09-15):", { placeholder: "اليوم" });
   if (!day) return;
   const slot = await promptDialog("نقل الحجز", "الوقت الجديد (مثال: 14:00):", { placeholder: "14:00" });
   if (!slot) return;
@@ -1435,6 +1453,7 @@ $("botBack").onclick = () => wizShow(wizStep - 1);
 $("botsRefresh").onclick = loadBots;
 $("botSearch").oninput = applyBotFilter;
 $("bkRefresh").onclick = loadBooking;
+$("bkAdd").onclick = addBk;
 $("bkFrom").onchange = updateBkExport;
 $("bkTo").onchange = updateBkExport;
 

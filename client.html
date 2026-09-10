@@ -80,7 +80,10 @@
     </div>
     <div id="pane-orders" class="hidden card p-3"><h3 class="font-bold mb-2">الطلبات</h3><div id="cOrders" class="space-y-2"></div></div>
     <div id="pane-booking" class="hidden card p-3">
-      <h3 class="font-bold mb-2">الحجوزات</h3>
+      <div class="flex items-center gap-2 mb-2">
+        <h3 class="font-bold">الحجوزات</h3>
+        <button id="cBkAdd" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#2563eb,#1e40af)">＋ حجز يدوي</button>
+      </div>
       <div class="overflow-auto">
         <table class="w-full text-sm">
           <thead><tr class="bg-slate-100 text-xs">
@@ -301,6 +304,23 @@ async function sendReply() {
 }
 $("cSend").onclick = sendReply;
 $("cReply").onkeydown = (e) => { if (e.key === "Enter") sendReply(); };
+$("cBkAdd").onclick = async () => {
+  const phone = await promptDialog("حجز يدوي", "رقم جوال العميل:", "9627...");
+  if (!phone) return;
+  const name = await promptDialog("حجز يدوي", "اسم العميل (اختياري):", "الاسم");
+  const service = await promptDialog("حجز يدوي", "الخدمة:", "موعد");
+  if (!service) return;
+  const day = await promptDialog("حجز يدوي", "اليوم (مثال: الغد):", "اليوم");
+  if (!day) return;
+  const slot = await promptDialog("حجز يدوي", "الوقت (مثال: 14:00):", "14:00");
+  if (!slot) return;
+  toast("جاري إنشاء الحجز...", "info");
+  try {
+    await api("/admin/appointments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, phone, name, service, day, slot }) });
+    toast("تم إنشاء الحجز ✅", "success");
+    loadBooking();
+  } catch (e) { toast("تعذر الإنشاء: " + e.message, "error"); }
+};
 async function loadOrders() {
   try {
     const j = await api("/admin/orders?tenant=" + encodeURIComponent(cur.tenant));

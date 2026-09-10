@@ -246,6 +246,33 @@ export function registerAdminRoutes(app) {
     const _ap = scope.global ? await listAppointmentsAll() : await listAppointments(scope.tenant);
     res.json({ count: _ap.length, appointments: _ap });
   });
+  // حجز يدوي (موظف الاستقبال: تلفون/حضور) — يحترم القيد الفريد
+  app.post("/admin/appointments", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const { phone, name, service, day, slot } = req.body || {};
+    if (!phone || !day || !slot) return res.status(400).json({ ok: false, error: "phone و day و slot مطلوبة" });
+    const { bookAppointment, freeSlots } = await import("../../../bookings.mjs");
+    try {
+      const b = await bookAppointment({ tenantId, phone: String(phone).trim(), name: (name || "").trim() || String(phone).trim(), service: (service || "").trim() || "موعد", day: String(day).trim(), slot: String(slot).trim() });
+      const { getTenantFull: gtf } = await import("../../../tenants.mjs");
+      const tenant = await gtf(tenantId);
+      if (tenant) {
+        const msg = `تم حجز موعدك يا غالي ✅ ${b.service} — ${b.day} الساعة ${b.slot} (${b.id}) في ${tenant.name}. بنتشرف فيك!`;
+        await sendWhatsAppMessage(b.phone, msg, tenant).catch(() => {});
+        await pushHistory(b.phone, "assistant", msg, tenant).catch(() => {});
+      }
+      logEvent("booking", { tenantId, phone: b.phone, bookingId: b.id, service: b.service, slot: b.slot, manual: true }).catch(() => {});
+      res.status(201).json({ ok: true, booking: b });
+    } catch (e) {
+      if (e?.code === "SLOT_TAKEN") {
+        const tenant = await getTenantFull(tenantId);
+        const free = await freeSlots(tenantId, String(day).trim(), tenant?.features?.bookingSlots).catch(() => []);
+        return res.status(409).json({ ok: false, error: "الموعد محجوز", free });
+      }
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
   app.get("/admin/orders", async (req, res) => {
     const scope = resolveScope(req, req.query.tenant);
     if (scope.denied) return denyGlobal(res);
