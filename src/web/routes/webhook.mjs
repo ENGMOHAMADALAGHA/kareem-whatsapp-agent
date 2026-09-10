@@ -57,6 +57,59 @@ import { createClientUser, listClientUsers } from "../../../portal.mjs";
 
 import { verifyMetaSignature } from "../middleware.mjs";
 
+// ── أدوات مساعدة: تاريخ الحجز + إنشاء طلب مع تعليمات الدفع ──
+// تاريخ فعلي للموعد بدل السلسلة الثابتة "أقرب يوم متاح" التي كانت تجعل
+// القيد (tenantId, day, slot) يحجز الساعة نفسها مرّة واحدة إلى الأبد.
+function bookingDay(day) {
+  if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  if (day && /^(اليوم|غداً|أقرب وقت)/.test(day)) return day;
+  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+// إنشاء طلب + تعليمات الدفع (يُستخدم للشراء النصي وضغط أزرار المنتجات)
+async function createOrderWithPayment(tenant, from, name, text, result) {
+  let total = detectTotal(tenant, text, result.reply);
+  const { findRecentPending } = await import("../../../orders.mjs");
+  const item = detectItem(tenant, text, result.reply);
+  let order = await findRecentPending(tenant.id, from, 30);
+  let isNew = false;
+  // سلعة مختلفة عن الطلب المعلق → طلب جديد بمبلغه الصحيح (لا إعادة استخدام خاطئة)
+  if (order && item && order.items?.[0]?.name && order.items[0].name !== item) {
+    order = null;
+  }
+  if (!order) {
+    order = await createOrder({
+      tenantId: tenant.id, phone: from, name,
+      items: [{ name: item, qty: 1 }],
+      total, currency: tenantCurrency(tenant),
+    });
+    isNew = true;
+  } else {
+    total = order.total; // التزم بإجمالي الطلب الأصلي (نفس السلعة)
+    console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه (نفس السلعة)`);
+  }
+  const cur = fmtMoney(total, order.currency);
+  // دفع بالمحافظ/CliQ حصراً — لا روابط دفع أبداً: تحويل + لقطة شاشة + تحقق
+  const wallets = tenant.features?.paymentWallets || [];
+  if (wallets.length) {
+    const lines = wallets.map((w) => `• ${w.type}: ${w.number}${w.name ? ` (${w.name})` : ""}`).join("\n");
+    result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي ${cur}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
+    console.log(`  💳 طلب ${order.id} ${cur} -> محافظ`);
+  } else {
+    const cliq = tenant.features?.cliq;
+    const instructions = cliq?.number
+      ? `حوّل ${cur} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
+      : `ابعت "أريد موظف" ليعطيك رقم التحويل (CliQ/محفظة)`;
+    result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي ${cur}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
+    console.log(`  💳 طلب ${order.id} ${cur} -> تحويل يدوي`);
+  }
+  if (isNew) {
+    logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});
+  }
+  await updateLastAssistant(from, result.reply, tenant);
+  return order;
+}
+
 export function registerWebhookRoutes(app) {
   app.get("/webhook", async (req, res) => {
     const mode = req.query["hub.mode"];
@@ -117,6 +170,11 @@ async function processWebhookBody(body) {
         const tenant = await resolveTenant({ phoneNumberId });
         if (tenant && (tenant.enabled === false || tenant.trialExpired)) {
           console.log(`  ⏸️ tenant موقوف/منتهي: ${tenant.id} - تم تجاهل الرسالة`);
+          continue;
+        }
+        // رقم بوت غير مسجل → لا نعالج الرسالة كبوت افتراضي (منع خلط المستأجرين)
+        if (!tenant && phoneNumberId) {
+          console.log(`  ⛔ دفعة من رقم بوت غير مسجل (${phoneNumberId}) — تجاهل كامل`);
           continue;
         }
 
@@ -269,7 +327,7 @@ async function processWebhookBody(body) {
             const qOrder = await getOrder(orderMatch[1].toLowerCase(), tenant?.id).catch(() => null);
             let reply;
             if (qOrder && qOrder.phone === from) {
-              const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة اليدوية 🔍" }[qOrder.status] || qOrder.status;
+              const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", canceled: "ملغي", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة اليدوية 🔍", rejected: "مرفوض — راجع الإيصال ❌" }[qOrder.status] || qOrder.status;
               reply = `طلبك ${qOrder.id} — ${(qOrder.items || []).map((i) => i.name).join(" + ")} — الإجمالي ${fmtMoney(qOrder.total, qOrder.currency)} — الحالة: ${statusAr}`;
             } else {
               reply = `ما لقيت طلب بهذا الرقم يا غالي 🤔 تأكد من الرقم (مثال: ord_abc123) أو ابعت "أريد موظف" للمساعدة.`;
@@ -294,7 +352,7 @@ async function processWebhookBody(body) {
               const score = Number(text.trim());
               const rating = await saveRating({ tenantId: tenant.id, phone: from, score, refId: pending.refId });
               const reply = score >= 4
-                ? `شكراً يا بطل! ⭐ تقييمك ${score}/5 أسعدنا. كريم معك خطوة بخطوة 👟`
+                ? `شكراً يا بطل! ⭐ تقييمك ${score}/5 أسعدنا ونوره يتقدم.`
                 : `شكراً لصراحتك يا غالي 🙏 تقييمك ${score}/5 وصلنا ورح نشتغل نحسّن. تحب يحكي معك موظف؟`;
               await pushHistory(from, "user", text, tenant);
               await pushHistory(from, "assistant", reply, tenant);
@@ -319,7 +377,7 @@ async function processWebhookBody(body) {
           let result = null;
           let handled = false;
 
-          // 1) ضغطة زر منتج لكريم: اعرض الصورة + أكمل شراء
+          // 1) ضغطة زر منتج لكريم: اعرض الصورة + أنشئ الطلب فوراً + تعليمات الدفع
           if (tenant?.id === "kareem-sport" && buttonId && /^(buy_shoes|buy_belt|bundle)$/.test(buttonId)) {
             const map = {
               buy_shoes: "أريد شراء حذاء الركض",
@@ -327,9 +385,13 @@ async function processWebhookBody(body) {
               bundle: "أريد حزام الظهر والحذاء معاً",
             };
             result = await processCustomerMessage(map[buttonId], from, tenant);
-            const prod = buttonId === "buy_shoes" ? tenant.products[0] : buttonId === "buy_belt" ? tenant.products[1] : null;
             try {
-              if (prod?.image) await sendImage(from, prod.image, `${prod.name} - ${fmtMoney(prod.price, tenantCurrency(tenant))}`, tenant);
+              if (result.intent === "شراء") {
+                // إنشاء طلب + إرفاق تعليمات الدفع بنفس الرسالة (لا حلقة تأكيد ميتة)
+                await createOrderWithPayment(tenant, from, name, map[buttonId], result);
+              }
+              const prod = buttonId === "buy_shoes" ? tenant.products[0] : buttonId === "buy_belt" ? tenant.products[1] : null;
+              if (prod?.image && tenant?.features?.images) await sendImage(from, prod.image, `${prod.name} - ${fmtMoney(prod.price, tenantCurrency(tenant))}`, tenant);
               await sendWhatsAppMessage(from, result.reply, tenant);
             } catch (sendErr) {
               console.error(`  ❌ فشل الإرسال: ${sendErr.message}`);
@@ -363,7 +425,7 @@ async function processWebhookBody(body) {
           if (bookingState?.step === "triage_q1") {
             const answers = { ...(bookingState.answers || {}), place: text.slice(0, 100) };
             await setBookingState(tenant.id, from, { step: "triage_q2", answers });
-            const reply = `تمام، ومن متى بلش الألم؟ (اليوم / من أيام / من أسابيع)`;
+            const reply = `تمام، ومن متى بلش الألم؟ (اليوم / من كم يوم / من أسابيع)`;
             await pushHistory(from, "user", text, tenant);
             await pushHistory(from, "assistant", reply, tenant);
             try {
@@ -396,22 +458,39 @@ async function processWebhookBody(body) {
 
           // 1هـ) التصنيف: طارئ أم عادي
           if (bookingState?.step === "triage_q3") {
-            const red = /(ورم|منتفخ|انتفاخ|حرارة|سخونة|سخن|نزيف|دم|كسر|مكسور|انكسر|خراج|لا يحتمل|لا يحتمل|شديد جدا|swell|fever|bleed|broken|abscess|red_swelling)/i.test(text + " " + (buttonId || ""));
+            const red = /(ورم|منتفخ|انتفاخ|حرارة|سخونة|سخن|نزيف|دم|كسر|مكسور|انكسر|خراج|لا يُحتمل|لا يحتمل|شديد جدا|swell|fever|bleed|broken|abscess|red_swelling)/i.test(text + " " + (buttonId || ""));
             const answers = { ...(bookingState.answers || {}), redFlags: red ? text.slice(0, 100) : "لا" };
             const summary = `العرض: ${answers.symptom || ""} | المكان: ${answers.place || ""} | المدة: ${answers.since || ""} | علامات: ${answers.redFlags}`;
             logEvent("triage", { tenantId: tenant.id, phone: from, emergency: red, summary: summary.slice(0, 300) }).catch(() => {});
             if (red) {
               await setBookingState(tenant.id, from, null);
-              const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: "حالة طارئة 🆘", day: "اليوم", slot: "أقرب وقت" });
-              const reply = `سلامتك أولاً يا غالي 🆘 الأعراض اللي ذكرتها تحتاج تدخل سريع — حجزتلك موعد طارئ اليوم (${booking.id}). تعال مباشرة على العيادة، والدكتور بانتظارك. إذا الوضع خطير اتصل فينا فوراً.`;
-              await pushHistory(from, "user", text, tenant);
-              await pushHistory(from, "assistant", reply, tenant);
+              // موعد طوارئ فريد: تاريخ اليوم + وقت فوري (يسمح بحالات طوارئ متعددة باليوم نفسه)
+              const now = new Date();
+              const day = now.toISOString().slice(0, 10);
+              const slot = `طوارئ فوري ${now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
               try {
-                await sendWhatsAppMessage(from, reply, tenant);
+                const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: "حالة طارئة 🆘", day, slot });
+                const reply = `سلامتك أولاً يا غالي 🆘 الأعراض اللي ذكرتها تحتاج تدخل سريع — حجزتلك موعد طارئ اليوم (${booking.id}). تعال مباشرة على العيادة، والدكتور بانتظارك. إذا الوضع خطير اتصل فينا فوراً.`;
+                await pushHistory(from, "user", text, tenant);
+                await pushHistory(from, "assistant", reply, tenant);
+                try {
+                  await sendWhatsAppMessage(from, reply, tenant);
+                } catch (e) {
+                  console.error(`  ❌ فشل الإرسال: ${e.message}`);
+                }
+                console.log(`  🆘 حالة طارئة ${tenant.id} ${from} (${booking.id})`);
               } catch (e) {
-                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+                // لا صمت أبداً: حتى لو تعارض، نخبر المريض بالاتصال المباشر
+                console.error(`  ❌ تعارض حجز طارئ: ${e.message}`);
+                const staffReply = `سلامتك يا غالي 🆘 الملف الطارئ مفتوح عندنا هلا — اتصل بالعيادة مباشرة 📞 أو ابعت "أريد موظف" للتنسيق الفوري. هذا تنبيه آلي وليس استشارة طبية.`;
+                await pushHistory(from, "user", text, tenant);
+                await pushHistory(from, "assistant", staffReply, tenant);
+                try {
+                  await sendWhatsAppMessage(from, staffReply, tenant);
+                } catch (se) {
+                  console.error(`  ❌ فشل إرسال تنبيه الطوارئ: ${se.message}`);
+                }
               }
-              console.log(`  🆘 حالة طارئة ${tenant.id} ${from} (${booking.id})`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
             }
@@ -433,7 +512,7 @@ async function processWebhookBody(body) {
 
           // 1و) الانضمام لقائمة الانتظار
           if (tenant?.features?.booking && /(انتظار|ضيفني|قائمة الانتظار|waitlist|waiting)/i.test(text)) {
-            const service = (tenant.products || [])[0]?.name || "موعد";
+            const service = bookingState?.service || (tenant.products || [])[0]?.name || "موعد";
             const w = await joinWaitingList({ tenantId: tenant.id, phone: from, name, service });
             const reply = `تم يا غالي ✅ انضميت لقائمة الانتظار (${w.id}) لخدمة ${service}. أول ما يفضى موعد بنخبرك فوراً هنا.`;
             await pushHistory(from, "user", text, tenant);
@@ -451,29 +530,76 @@ async function processWebhookBody(body) {
 
           // 1ز) قبول عرض موعد من الانتظار
           if (bookingState?.step === "offer" && /^(تم|موافق|نعم|ok|yes)$/i.test(text.trim())) {
-            const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: bookingState.service || "موعد", day: bookingState.day || "أقرب يوم", slot: bookingState.slot || "" });
-            await setBookingState(tenant.id, from, null);
-            const reply = `ممتاز! 🎉 تم تأكيد موعدك ${booking.service} (${booking.id}). بنتشرف فيك!`;
-            await pushHistory(from, "user", text, tenant);
-            await pushHistory(from, "assistant", reply, tenant);
-            logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: booking.id, fromWaiting: true }).catch(() => {});
-            try {
-              await sendWhatsAppMessage(from, reply, tenant);
-            } catch (e) {
-              console.error(`  ❌ فشل الإرسال: ${e.message}`);
+            // مهلة العرض الفعلية: ساعة (كما وعدنا العميل) لا 24 ساعة
+            const offerAge = bookingState.offeredAt ? Date.now() - bookingState.offeredAt : 0;
+            if (offerAge > 60 * 60 * 1000) {
+              await setBookingState(tenant.id, from, null);
+              const expired = `انتهت مهلة العرض يا غالي 😊 الموعد بيعطي بالعادة خلال ساعة من عرضه. ابعت "حجز" لموعد جديد أو "انتظار" لعودتك للقائمة.`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", expired, tenant);
+              try { await sendWhatsAppMessage(from, expired, tenant); } catch (e) { console.error(`  ❌ فشل الإرسال: ${e.message}`); }
+              console.log(`  ⏳ عرض منتهي ${tenant.id} ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
             }
-            const { notifyOwner } = await import("../../compliance/messaging.mjs");
-            notifyOwner(tenant, "booking", `📅 حجز من الانتظار: ${booking.service} — ${from} (${booking.id})`).catch(() => {});
-            console.log(`  📋 تأكيد من الانتظار ${booking.id} ${from}`);
+            try {
+              const accepted = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: bookingState.service || "موعد", day: bookingDay(bookingState.day), slot: bookingState.slot || "" });
+              await setBookingState(tenant.id, from, null);
+              const reply = `ممتاز! 🎉 تم تأكيد موعدك ${accepted.service} (${accepted.id}). بنتشرف فيك!`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: accepted.id, fromWaiting: true }).catch(() => {});
+              try {
+                await sendWhatsAppMessage(from, reply, tenant);
+              } catch (e) {
+                console.error(`  ❌ فشل الإرسال: ${e.message}`);
+              }
+              const { notifyOwner } = await import("../../compliance/messaging.mjs");
+              notifyOwner(tenant, "booking", `📅 حجز من الانتظار: ${accepted.service} — ${from} (${accepted.id})`).catch(() => {});
+              console.log(`  📋 تأكيد من الانتظار ${accepted.id} ${from}`);
+            } catch (e) {
+              const taken = e?.code === "SLOT_TAKEN" || e?.code === "P2002";
+              await setBookingState(tenant.id, from, null);
+              const free = taken ? await freeSlots(tenant.id, bookingDay(bookingState.day), tenant.features?.bookingSlots) : [];
+              const reply = taken
+                ? (free.length
+                    ? `للأسف الموعد انحجز قبل لحظات 😅 الفارغ مثل: ${free.join("، ")} — اختر واحد؟ أو "انتظار"`
+                    : `للأسف كل الأوقات انحجزت 😅 ابعت "حجز" لبدء حجز جديد أو "انتظار" للقائمة.`)
+                : `للأسف تعذر تأكيد العرض 🤔 ابعت "حجز" لموعد جديد.`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                if (taken && free.length) await sendButtons(from, reply, free.slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+                else await sendWhatsAppMessage(from, reply, tenant);
+              } catch (se) { console.error(`  ❌ فشل الإرسال: ${se.message}`); }
+              console.log(`  ⚠️ فشل تأكيد العرض ${tenant.id} ${from}: ${e.message}`);
+            }
             console.log(`${"─".repeat(60)}\n`);
             continue;
           }
 
           // 2) بدء الحجز
           if (wantsBooking && !bookingState) {
+            const services = tenant.products || [];
+            // أكثر من خدمة → خطوة اختيار الخدمة أولاً
+            if (services.length > 1) {
+              await setBookingState(tenant.id, from, { step: "service" });
+              const reply = `تمام يا غالي 😊 بتبسط في ${tenant.name} هالخدمات:\n${services.map((s) => `• ${s.name} (${s.price} د.أ)`).join("\n")}\nأي خدمة بدك تحجز؟`;
+              result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendButtons(from, reply, services.slice(0, 3).map((s, i) => ({ id: `svc_${i}`, title: `${s.name} (${s.price} د.أ)` })), tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+              }
+              console.log(`  📅 بدء حجز (اختيار خدمة) ${tenant.id} للعميل ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
             const slots = (tenant.features.bookingSlots || []).join("، ");
-            await setBookingState(tenant.id, from, { step: "slot" });
-            const reply = `تمام يا غالي 😊 احجز موعدك في ${tenant.name}. أوقاتنا: ${tenant.features.workingHours || ""}. اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00) واسم الخدمة.`;
+            await setBookingState(tenant.id, from, { step: "slot", day: "أقرب يوم متاح" });
+            const reply = `تمام يا غالي 😊 احجز موعدك في ${tenant.name}. أوقاتنا: ${tenant.features.workingHours || ""}. اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00).`;
             result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
             await pushHistory(from, "user", text, tenant);
             await pushHistory(from, "assistant", reply, tenant);
@@ -487,13 +613,51 @@ async function processWebhookBody(body) {
             continue;
           }
 
+          // 2ب) اختيار الخدمة (عيادات/خدمات متعددة)
+          if (bookingState?.step === "service") {
+            const services = tenant.products || [];
+            const chosen = services.find((s, i) => {
+              if (buttonId && buttonId.startsWith("svc_")) return Number(buttonId.replace("svc_", "")) === i;
+              const kw = (s.name || "").split(" ")[0].toLowerCase();
+              return kw && text.toLowerCase().includes(kw);
+            });
+            if (chosen) {
+              await setBookingState(tenant.id, from, { step: "slot", day: "أقرب يوم متاح", service: chosen.name });
+              const slots = (tenant.features.bookingSlots || []).join("، ");
+              const reply = `ممتاز ${chosen.name} 👍 اختر الوقت المناسب: ${slots}. ابعت الوقت (مثال: 14:00).`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", reply, tenant);
+              try {
+                await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+              }
+              console.log(`  🩺 اختيرت الخدمة ${chosen.name} ${tenant.id} ${from}`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            }
+            const reask = `ما فهمت أي خدمة قصدك يا غالي 😅 اختر من القائمة:`;
+            await pushHistory(from, "user", text, tenant);
+            await pushHistory(from, "assistant", reask, tenant);
+            try {
+              await sendButtons(from, reask, services.slice(0, 3).map((s, i) => ({ id: `svc_${i}`, title: `${s.name} (${s.price} د.أ)` })), tenant);
+            } catch (e) {
+              await sendWhatsAppMessage(from, reask, tenant).catch(() => {});
+            }
+            console.log(`${"─".repeat(60)}\n`);
+            continue;
+          }
+
           // 3) استكمال الحجز (اختار وقت)
           if (bookingState?.step === "slot") {
-            const slotMatch = text.match(/(\d{1,2}:\d{2})/) || (buttonId?.startsWith("slot_") ? [null, buttonId.replace("slot_", "")] : null);
+            // دعم الأرقام العربية-الهندية (١٤:٠٠) بتوحيدها قبل المطابقة
+            const norm = text.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+              .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+            const slotMatch = norm.match(/(\d{1,2}:\d{2})/) || (buttonId?.startsWith("slot_") ? [null, buttonId.replace("slot_", "")] : null);
             if (slotMatch) {
               const slot = slotMatch[1];
-              const service = (tenant.products || [])[0]?.name || "موعد";
-              const day = bookingState.day || "أقرب يوم متاح";
+              const service = bookingState.service || (tenant.products || [])[0]?.name || "موعد";
+              const day = bookingDay(bookingState.day || "أقرب يوم متاح");
               // سياسة ثابتة: موعد واحد لكل وقت (طبيب/مزرعة/تجميل — لا حجوزات مزدوجة أبداً)
               if (await isSlotTaken(tenant.id, day, slot)) {
                 const free = await freeSlots(tenant.id, day, tenant.features?.bookingSlots);
@@ -537,7 +701,7 @@ async function processWebhookBody(body) {
                 throw e;
               }
               await setBookingState(tenant.id, from, null);
-              const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
+              const reply = `تم تأكيد حجزك يا غالي ✅ ${service} - يوم ${day} - الساعة ${slot} (${booking.id}). بنتشرف فيك في ${tenant.name}! لإلغاء/تعديل ابعت "أريد موظف".`;
               result = { reply, transfer_to_human: false, intent: "حجز_موعد" };
               await pushHistory(from, "user", text, tenant);
               await pushHistory(from, "assistant", reply, tenant);
@@ -553,6 +717,18 @@ async function processWebhookBody(body) {
               console.log(`  📅 تأكيد حجز ${booking.id} ${tenant.id} ${from} ${slot}`);
               console.log(`${"─".repeat(60)}\n`);
               continue;
+            } else if (!/موظف|انسان|بشري|انتظار|قائمة|إلغ|الغى|الغاء|الغائ/.test(text)) {
+              // في خطوة الوقت لكن الرسالة بلا ساعة — أعد عرض الأزرار (لا نتركه بلا مسار)
+              const hint = `تمام يا غالي 😊 اختر الساعة من القائمة أو ابعت الوقت بصيغة رقمية (مثال: 14:00):`;
+              await pushHistory(from, "user", text, tenant);
+              await pushHistory(from, "assistant", hint, tenant);
+              try {
+                await sendButtons(from, hint, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+              } catch (e) {
+                await sendWhatsAppMessage(from, hint, tenant).catch(() => {});
+              }
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
             }
           }
 
@@ -562,7 +738,7 @@ async function processWebhookBody(body) {
           const escActive = await sg2(`esc:${tenant?.id}::${from}`).catch(() => null);
           if (escActive) {
             result = {
-              reply: "طلبك عند الفريق يا غالي 🙏 بيرد عليك بأقرب وقت. كريم معك خطوة بخطوة 👟",
+              reply: "طلبك عند الفريق يا غالي 🙏 بيرد عليك بأقرب وقت.",
               transfer_to_human: true,
               intent: "تصعيد",
             };
@@ -597,41 +773,7 @@ async function processWebhookBody(body) {
             !tenant?.features?.booking;
           if (wantsPay) {
             try {
-              let total = detectTotal(tenant, text, result.reply);
-              // منع التكرار: طلب معلق لنفس الرقم خلال 30 دقيقة يُعاد استخدامه
-              const { findRecentPending } = await import("../../../orders.mjs");
-              let order = await findRecentPending(tenant.id, from, 30);
-              let isNew = false;
-              if (!order) {
-                order = await createOrder({
-                  tenantId: tenant.id, phone: from, name,
-                  items: [{ name: detectItem(tenant, text, result.reply), qty: 1 }],
-                  total, currency: tenantCurrency(tenant),
-                });
-                isNew = true;
-              } else {
-                total = order.total; // التزم بإجمالي الطلب الأصلي
-                console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه بدل الجديد`);
-              }
-              const cur = fmtMoney(total, order.currency);
-              // دفع بالمحافظ/CliQ حصراً — لا روابط دفع أبداً: تحويل + لقطة شاشة + تحقق
-              const wallets = tenant.features?.paymentWallets || [];
-              if (wallets.length) {
-                const lines = wallets.map((w) => `• ${w.type}: ${w.number}${w.name ? ` (${w.name})` : ""}`).join("\n");
-                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي ${cur}.\nحوّل المبلغ على إحدى المحافظ:\n${lines}\nثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
-                console.log(`  💳 طلب ${order.id} ${cur} -> محافظ`);
-              } else {
-                const cliq = tenant.features?.cliq;
-                const instructions = cliq?.number
-                  ? `حوّل ${cur} عبر CliQ على ${cliq.number}${cliq.name ? ` (${cliq.name})` : ""}`
-                  : `ابعت "أريد موظف" ليعطيك رقم التحويل (CliQ/محفظة)`;
-                result.reply += `\n\n🧾 طلبك ${order.id} — الإجمالي ${cur}.\n${instructions}، ثم ابعت لقطة الشاشة هون 📸 والتحقق تلقائي ✨`;
-                console.log(`  💳 طلب ${order.id} ${cur} -> تحويل يدوي`);
-              }
-              if (isNew) {
-                logEvent("order", { tenantId: tenant.id, phone: from, orderId: order.id, total, intent: result.intent }).catch(() => {});
-              }
-              await updateLastAssistant(from, result.reply, tenant);
+              await createOrderWithPayment(tenant, from, name, text, result);
             } catch (e) {
               console.error(`  ❌ خطأ إنشاء الطلب: ${e.message}`);
             }

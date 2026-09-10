@@ -82,6 +82,9 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
     const def = tenants.find((t) => t.id === "kareem-sport" && (t.phoneNumberId || envPhoneId) === phoneNumberId)
       || tenants.find((t) => (t.phoneNumberId || envPhoneId) === phoneNumberId);
     if (def) return withEnvDefaults(def);
+    // رقم بوت غير معروف إطلاقاً — لا نعالجه كبوت افتراضي (منع خلط المستأجرين)
+    console.warn(`  ⛔ phone_number_id غير مسجل (${phoneNumberId}) — تجاهل لتجنب خلط البوتات`);
+    return null;
   }
   if (verifyToken) {
     const hit = tenants.find((t) => (t.verifyToken || envVerify) === verifyToken);

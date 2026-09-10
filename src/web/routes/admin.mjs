@@ -53,6 +53,7 @@ import { createClientUser, listClientUsers } from "../../../portal.mjs";
 import { WHATSAPP_TOKEN } from "../../config/env.mjs";
 
 import { webhookQueue } from "../../jobs/queue.mjs";
+import { sendWithWindowFallback } from "../../compliance/messaging.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -202,7 +203,7 @@ export function registerAdminRoutes(app) {
         `🤖 البوت: ${tenantId}\n📱 الجوال: ${u.phone}\n🔑 كلمة مؤقتة: ${tempPassword}\n` +
         `ادخل وغيّر الكلمة من (نسيت كلمة السر) بعد أول دخول.`;
       try {
-        await sendWhatsAppMessage(String(phone).trim(), msg, tenant);
+        await sendWithWindowFallback(String(phone).trim(), msg, tenant);
         sent = true;
         logEvent("invite_sent", { tenantId, phone: u.phone }).catch(() => {});
       } catch (e) {
@@ -312,6 +313,47 @@ export function registerAdminRoutes(app) {
     const msg = `تم استلام الدفع يا بطل ✅ طلبك ${order.id} (${fmtMoney(order.total, order.currency)}) تأكد وبتجهز هلا للتوصيل. شكراً لثقتك!`;
     if (tenant) {
       await sendWhatsAppMessage(order.phone, msg, tenant).catch(() => {});
+      await pushHistory(order.phone, "assistant", msg, tenant);
+    }
+    res.json({ ok: true, orderId: order.id });
+  });
+  // عرض صورة الإيصال داخل الأدمن (تحميل مؤقت من واتساب عبر Graph API — لا تُخزَّن)
+  app.get("/admin/orders/:id/proof-media", async (req, res) => {
+    const tenantId = req.clientTenant || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    try {
+      const { getOrder } = await import("../../../orders.mjs");
+      const { downloadWhatsAppMedia } = await import("../../../voice.mjs");
+      const order = await getOrder(req.params.id, tenantId).catch(() => null);
+      if (!order?.proof?.mediaId) return res.status(404).json({ ok: false, error: "لا إيصال مرفق بهذا الطلب" });
+      const { getTenantFull } = await import("../../../tenants.mjs");
+      const tenant = await getTenantFull(tenantId);
+      const token = tenant?.whatsapp_token || process.env.WHATSAPP_TOKEN;
+      const { buffer, mimeType } = await downloadWhatsAppMedia(order.proof.mediaId, token);
+      res.setHeader("Content-Type", mimeType || "image/jpeg");
+      res.setHeader("Content-Disposition", `inline; filename="receipt-${order.id}.jpg"`);
+      res.send(buffer);
+    } catch (e) {
+      res.status(404).json({ ok: false, error: e.message });
+    }
+  });
+  // رفض الإيصال بسبب إلزامي: يُسجَّل ويُخطر العميل — يغلق حلقة المراجعة بدل حالة معلقة للأبد
+  app.post("/admin/orders/:id/reject", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason) return res.status(400).json({ ok: false, error: "سبب الرفض مطلوب" });
+    const { getOrder, rejectOrder } = await import("../../../orders.mjs");
+    const order = await getOrder(req.params.id, tenantId).catch(() => null);
+    if (!order) return res.status(404).json({ ok: false, error: "الطلب غير موجود" });
+    await rejectOrder(order.id, tenantId, { reason });
+    const { getTenantFull } = await import("../../../tenants.mjs");
+    const tenant = await getTenantFull(tenantId);
+    const { pushHistory } = await import("../../memory/conversations.mjs");
+    logEvent("proof_rejected", { tenantId, phone: order.phone, orderId: order.id, reason }).catch(() => {});
+    const msg = `عذراً يا بطل 🙏 في مشكلة باعتماد إيصال طلبك ${order.id}: ${reason}.\nلو سمحت راجعها وحاول مرة تانية، أو ابعت "أريد موظف" ونساعدك مباشرة.`;
+    if (tenant) {
+      await sendWithWindowFallback(order.phone, msg, tenant).catch(() => {});
       await pushHistory(order.phone, "assistant", msg, tenant);
     }
     res.json({ ok: true, orderId: order.id });
@@ -450,12 +492,16 @@ export function registerAdminRoutes(app) {
         ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} (${fmtMoney(first.total, first.currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
         : `يا هلا يا بطل! 👋 عندك ${list.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
       try {
-        await sendWhatsAppMessage(first.phone, msg, tenant);
-        await pushHistory(first.phone, "assistant", msg, tenant);
+        const r = await sendWithWindowFallback(first.phone, msg, tenant);
+        if (!r.ok) {
+          console.log(`  ⏭️ سلة مهجورة -> ${first.phone}: ${r.reason}`);
+        } else {
+          await pushHistory(first.phone, "assistant", msg, tenant);
+        }
         for (const o of list) {
           await markCartReminded(o.id, o.tenantId);
         }
-        logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: list.map((o) => o.id) }).catch(() => {});
+        logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: list.map((o) => o.id), skipped: r.ok ? undefined : r.reason }).catch(() => {});
         sent.push(...list.map((o) => o.id));
       } catch (e) {
         console.error(`  ❌ فشل تذكير السلة لـ ${first.phone}: ${e.message}`);
@@ -497,7 +543,10 @@ export function registerAdminRoutes(app) {
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     try {
-      const r = await sendWhatsAppMessage(phone, text, tenant);
+      const r = await sendWithWindowFallback(phone, text, tenant);
+      if (!r.ok) {
+        return res.json({ ok: false, skipped: r.reason, phone });
+      }
       await pushHistory(phone, "assistant", text, tenant);
       res.json({ ok: true, result: r });
     } catch (e) {
@@ -542,8 +591,12 @@ load();
       if (!tenant) continue;
       const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
       try {
-        await sendWhatsAppMessage(b.phone, msg, tenant);
-        await pushHistory(b.phone, "assistant", msg, tenant);
+        const r = await sendWithWindowFallback(b.phone, msg, tenant);
+        if (!r.ok) {
+          console.log(`  ⏭️ تذكير يدوي ${b.id} -> ${b.phone}: ${r.reason}`);
+        } else {
+          await pushHistory(b.phone, "assistant", msg, tenant);
+        }
         await markReminded(b.id, b.tenantId);
         sent.push(b.id);
       } catch (e) {
@@ -564,12 +617,13 @@ load();
       const next = await popWaiting(b.tenantId, b.service);
       if (next) {
         const tenant = await getTenantFull(b.tenantId);
-        const msg = `خبر حلو يا غالي 🎉 فضي موعد ${b.service || ""} — الساعة ${b.slot || ""}. رد بـ "تم" خلال ساعة لتأكيده، أو تجاهل الرسالة.`;
+        const msg = `خبر حلو يا غالي 🎉 فضي موعد ${b.service || ""} — يوم ${b.day || "أقرب يوم"} — الساعة ${b.slot || ""}. رد بـ "تم" خلال ساعة لتأكيده، أو تجاهل الرسالة.`;
         if (tenant) {
-          await sendWhatsAppMessage(next.phone, msg, tenant).catch(() => {});
+          // يمر عبر البديل المتوافق: لا رسالة خارج نافذة 24h بدون قالب
+          await sendWithWindowFallback(next.phone, msg, tenant).catch(() => {});
           await pushHistory(next.phone, "assistant", msg, tenant);
         }
-        await setBookingState(b.tenantId, next.phone, { step: "offer", service: b.service, slot: b.slot, day: b.day });
+        await setBookingState(b.tenantId, next.phone, { step: "offer", service: b.service, slot: b.slot, day: b.day, offeredAt: Date.now() });
         await removeFromWaiting(next.id, b.tenantId);
         offered = next.phone;
         console.log(`  📋 عرض موعد ملغي ${b.id} على ${offered}`);

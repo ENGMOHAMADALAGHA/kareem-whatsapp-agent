@@ -157,6 +157,32 @@ function mockReply(userMessage) {
     intent: "استفسار",
   };
 }
+
+// رد بديل عام لبقية البوتات (عيادات/خدمات) — لا نُسرب كتالوج كريم أبداً خارج متجره
+function fallbackReplyFor(tenant, userMessage) {
+  const msg = String(userMessage || "").toLowerCase();
+  const name = tenant?.botName || tenant?.id || "البوت";
+  if (tenant?.features?.booking) {
+    if (/موعد|حجز|احجز|book|appointment/.test(msg)) {
+      return {
+        reply: `يا هلا فيك يا غالي 🌸 اهلاً بك في ${name}. احجز موعدك بكلمة "حجز" أو انضم لقائمتنا بـ"انتظار".`,
+        transfer_to_human: false,
+        intent: "حجز_موعد",
+      };
+    }
+    return {
+      reply: `يا هلا فيك 🌸 بنخدمك في ${name} 😊 احجز موعدك بكلمة "حجز"، أو ابعت "أريد موظف" للتواصل المباشر.`,
+      transfer_to_human: false,
+      intent: "استفسار",
+    };
+  }
+  const prods = (tenant?.products || []).map((p) => `${p.name} (${p.price} د.أ)`).join("، ");
+  return {
+    reply: `يا هلا فيك 😊 عنا: ${prods || "منتجاتنا"}.\nكيف أساعدك؟ ابعت "أريد موظف" لأي استفسار.`,
+    transfer_to_human: false,
+    intent: "استفسار",
+  };
+}
 // ──────────────────────────────────────────────
 // 6. الدالة الأساسية: getKareemReply (مع ذاكرة)
 // ──────────────────────────────────────────────
@@ -168,7 +194,7 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
   // وضع DEMO بدون استهلاك API - مع ذاكرة بسيطة
   if (isDemoMode) {
     await new Promise((r) => setTimeout(r, 300));
-    const result = mockReply(userMessage);
+    const result = tenant?.id === "kareem-sport" ? mockReply(userMessage) : fallbackReplyFor(tenant, userMessage);
     // حفظ في الذاكرة حتى في وضع DEMO (معزولة لكل بوت)
     await Promise.all([
       pushHistory(phone, "user", userMessage, tenant),
@@ -256,7 +282,7 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
     return parsed;
   } catch (err) {
     console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
-    const fallback = mockReply(userMessage);
+    const fallback = tenant?.id === "kareem-sport" ? mockReply(userMessage) : fallbackReplyFor(tenant, userMessage);
     await pushHistory(phone, "assistant", fallback.reply, tenant);
     return fallback;
   }

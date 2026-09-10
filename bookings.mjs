@@ -69,7 +69,7 @@ export async function syncBookingToGoogleSheets(booking) {
 export async function updateAppointment(id, tenantId, patch = {}) {
   const data = {};
   if (patch.name !== undefined) data.name = String(patch.name).trim() || undefined;
-  if (patch.phone !== undefined && String(patch.phone).trim()) data.phone = String(patch.phone).trim();
+  if (patch.phone !== undefined && String(patch.phone).trim()) data.phone = normalizePhone(String(patch.phone).trim());
   if (patch.service !== undefined) data.service = String(patch.service).trim() || "موعد";
   if (patch.day !== undefined && String(patch.day).trim()) data.day = String(patch.day).trim();
   if (patch.slot !== undefined && String(patch.slot).trim()) data.slot = String(patch.slot).trim();
@@ -148,13 +148,27 @@ function rowToBooking(r) {
   };
 }
 
-// تذكير: حجوزات مؤكدة بدون تذكير ومر عليها N دقيقة (مجدول عام)
+// تذكير: حجوزات مؤكدة يوم غد (التذكير قبل الموعد بيوم) بلا تذكير سابق
+// "العمود when" الحقيقي: day يُخزّن ISO فعلي منذ إصلاح bookingDay. عند مطابقة غداً فقط
+// نتأكد أننا نذكّر قبل الموعد وليس 60 دقيقة بعد الحجز.
+export function isoDay(offsetDays = 0) {
+  return new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 export async function dueReminders({ afterMinutes = 60 } = {}) {
+  const tomorrow = isoDay(1);
   const rows = await systemDb("scheduler:dueReminders").appointment.findMany({
     where: {
       status: "confirmed",
       remindedAt: null,
+      // لا نذكّر حجزاً خرج من دقيقة (بداية هادئة في حال أضاف الطاقم موعداً للغد من اللوحة)
       createdAt: { lt: new Date(Date.now() - afterMinutes * 60 * 1000) },
+      OR: [
+        { day: tomorrow },
+        // انتقال للحجز القديم قبل توحيد اليوم (أقرب يوم متاح/غداً/اليوم) — ذُكَّر مرة واحدة
+        { day: "أقرب يوم متاح" },
+        { day: { in: ["غداً", "غدا", "اليوم"] } },
+      ],
     },
   });
   return rows.map(rowToBooking);

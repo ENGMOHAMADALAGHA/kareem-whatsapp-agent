@@ -168,7 +168,8 @@ const deadToCrm = (where) => async (job, err) => {
 export const webhookQueue = createDurableQueue("webhooks", {
   concurrency: Number(process.env.QUEUE_CONCURRENCY || 5),
   retries: Number(process.env.QUEUE_RETRIES || 2),
-  timeoutMs: Number(process.env.QUEUE_TIMEOUT_MS || 60000),
+  // ≥ التفريغ الصوتي (45ث) + رد AI + إرسال — وإلا يموت صوت الضيف في الـ DLQ
+  timeoutMs: Number(process.env.QUEUE_TIMEOUT_MS || 120000),
   onDead: deadToCrm("webhooks"),
 });
 

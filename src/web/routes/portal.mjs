@@ -1,6 +1,6 @@
 import { getTenantFull } from "../../../tenants.mjs";
 import { verifyClientUser, signClientToken, startPasswordReset, finishPasswordReset } from "../../../portal.mjs";
-import { sendWhatsAppMessage } from "../../whatsapp/sender.mjs";
+import { sendWithWindowFallback } from "../../compliance/messaging.mjs";
 import { checkLimit, loginKey } from "../../security/rateLimit.mjs";
 
 export function registerPortalRoutes(app) {
@@ -26,9 +26,16 @@ export function registerPortalRoutes(app) {
     try {
       const { startPasswordReset } = await import("../../../portal.mjs");
       const { tenantId, phone } = req.body || {};
+      // حماية من سبام الرسائل + تخمين: 3 طلبات/دقيقة لكل حساب
+      const ip = req.ip || req.socket?.remoteAddress || "unknown";
+      const lim = checkLimit(loginKey(tenantId, phone, ip) + ":forgot", 3, 60 * 1000);
+      if (!lim.allowed) {
+        return res.status(429).json({ ok: false, error: `محاولات كثيرة — حاول بعد ${lim.retryAfter} ثانية` });
+      }
       const tenant = await getTenantFull(tenantId);
       if (!tenant) return res.json({ ok: true }); // لا نكشف
-      await startPasswordReset(tenantId, phone, (codeMsg) => sendWhatsAppMessage(phone, codeMsg, tenant));
+      // البديل المتوافق: يصل الرمز حتى خارج نافذة 24h (قالب) أو يُوثق بصمت
+      await startPasswordReset(tenantId, phone, (codeMsg) => sendWithWindowFallback(phone, codeMsg, tenant));
       res.json({ ok: true });
     } catch (e) {
       res.json({ ok: true }); // دائماً نجاح ظاهري (حماية)

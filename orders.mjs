@@ -149,6 +149,17 @@ export async function markOrderReview(id, tenantId, review) {
   return rowToOrder(row);
 }
 
+// رفض الإيصال يدوياً بسبب مكتوب: يُسجَّل السبب بالطلب ويُخطر العميل (تغلق الحلقة)
+export async function rejectOrder(id, tenantId, { reason, by }) {
+  if (!reason || !String(reason).trim()) throw new Error("سبب الرفض مطلوب");
+  const T = tenantDb(tenantId);
+  const current = await T.order.findFirst({ where: { id } }).catch(() => null);
+  if (!current) return null;
+  const proof = { ...(current.proof || {}), review: { by: by || "acp", reason: String(reason).trim(), at: new Date().toISOString() } };
+  const row = await T.order.update({ where: { id }, data: { proof, status: "rejected" } }).catch(() => null);
+  return rowToOrder(row);
+}
+
 // ── العملة: دينار أردني افتراضياً (السوق الأردني) ──
 // الدولار يُفعّل لكل عميل عبر features.currency فقط عند الطلب.
 export const DEFAULT_CURRENCY = "JOD";
@@ -165,24 +176,41 @@ export function fmtMoney(amount, currency = DEFAULT_CURRENCY) {
 // سياسة الدفع: محافظ/CliQ + إيصال حصراً — لا بوابات إلكترونية ولا روابط دفع.
 // التأكيد يتم فقط عبر تحقق الإيصال الآلي أو تأكيد الموظف اليدوي.
 
-// تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
-// تقدير الإجمالي والصنف من نص المحادثة (بسيط وقابل للتطوير)
+// تقدير الإجمالي والصنف من نص المحادثة.
+// الأفضلية دائماً للمبلغ الصريح في جملة "الإجمالي"، ثم مبلغ يطابق (سعر منتج + توصيل)،
+// ثم الباندل، ثم سعر منتج منفرد (+توصيل) — يمنع التقاط أسعار عروض جانبية ويضمن إضافة التوصيل.
 export function detectTotal(tenant, userText, replyText) {
   const all = `${userText} ${replyText}`;
-  // العملة قبل الرقم ($55) أو بعده (39 دينار / 50 د.أ) — المهم وجود علامة عملة
-  const m = all.match(/(?:(?:\$|د\.أ|دينار|JD)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:د\.أ|دينار|JD))/g);
-  if (m && m.length) {
-    const nums = m.map((s) => parseFloat(s.replace(/[^\d.]/g, ""))).filter((n) => !Number.isNaN(n));
-    if (nums.length) return Math.max(...nums);
+  // 1) المبلغ الصريح في جملة الإجمالي/المجموع/total (مصدر الحقيقة عند الـ AI)
+  const mTotal = all.match(/(?:الإجمالي|المجموع|الاجمالي|الإجمالى|المجموع الكلي|total)[^0-9$]*(?:(?:\$|د\.أ|دينار|JD)\s*)?(\d+(?:\.\d+)?)/i);
+  if (mTotal) {
+    const v = parseFloat(mTotal[1]);
+    if (!Number.isNaN(v)) return v;
   }
-  const prices = (tenant.products || []).map((p) => p.price);
-  const max = Math.max(...prices, 0);
-  return max + (tenant.deliveryFee || 0);
+  // 2) أرقام مصحوبة بعملة
+  const m = all.match(/(?:(?:\$|د\.أ|دينار|JD)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:د\.أ|دينار|JD))/g);
+  if (!m || !m.length) {
+    const prices = (tenant.products || []).map((p) => Number(p.price));
+    return Math.max(...prices, 0) + Number(tenant.deliveryFee || 0);
+  }
+  const nums = m.map((s) => parseFloat(s.replace(/[^\d.]/g, ""))).filter((n) => !Number.isNaN(n) && n > 0);
+  const fee = Number(tenant.deliveryFee || 0);
+  const prices = (tenant.products || []).map((p) => Number(p.price));
+  const totals = prices.map((p) => p + fee);               // سعر منتج واحد + توصيل
+  const bundle = tenant.bundleOffer?.enabled ? Number(tenant.bundleOffer.price) : null;
+  // 3) مبلغ يطابق إجمالياً معروفاً (منتج + توصيل) — الأكثر دقة
+  for (const t of totals) if (nums.some((n) => Math.abs(n - t) < 0.001)) return t;
+  // 4) باندل (شامل — بلا إضافة توصيل)
+  if (bundle !== null && nums.some((n) => Math.abs(n - bundle) < 0.001)) return bundle;
+  // 5) سعر منتج منفرد → نضيف رسوم التوصيل
+  for (const p of prices) if (nums.some((n) => Math.abs(n - p) < 0.001)) return p + fee;
+  // 6) لا مطابقة
+  return Math.max(...prices, 0) + fee;
 }
 export function detectItem(tenant, userText, replyText) {
   const all = `${userText} ${replyText}`;
-  for (const p of tenant.products || []) {
-    if (p.name && all.includes(p.name.split(" ")[0])) return p.name;
-  }
-  return (tenant.products || []).map((p) => p.name).join(" + ") || "طلب";
+  // باندل: إذا ذُكر أكثر من صنف نعيدهم معاً بدل الصنف الأول فقط
+  const matched = (tenant.products || []).filter((p) => p.name && all.includes(p.name.split(" ")[0]));
+  if (matched.length >= 2) return matched.map((p) => p.name).join(" + ");
+  return matched[0]?.name || (tenant.products || []).map((p) => p.name).join(" + ") || "طلب";
 }

@@ -7,14 +7,31 @@
 - Git (https://git-scm.com/download/win)
 - منفذ مفتوح: 3000 (أو 80/443 عبر reverse proxy)
 - PM2 لإبقاء السيرفر شغال: `npm i -g pm2`
+- قاعدة البيانات: PostgreSQL (Supabase أو محلي) مع `DATABASE_URL` جاهز
 
 ## 2. أول تنصيب
 ```powershell
 git clone https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent.git C:\bots\kareem
 cd C:\bots\kareem
-npm install
 Copy-Item .env.example .env
-notepad .env   # عبّي المفاتيح الحقيقية
+notepad .env   # عبّي المفاتيح الحقيقية (لازم DATABASE_URL أولاً)
+npm install
+```
+
+### 2ب) إنشاء/تهيئة قاعدة البيانات (خطوة حرجة)
+> **قاعدة فارغة على Postgres جديد:**
+> ```powershell
+> npm run db:sql   # يعيد توليد prisma/schema.sql من schema.prisma (رفيف)
+> npm run db:init  # يطبّق المخطط فقط على قاعدة لا تحتوي tenants — آمن
+> ```
+> **قاعدة قائمة (Supabase الحالي):** التخطي — الجداول موجودة. لا تشغّل `db:init` فوقها
+> (لا تغيير، لكن لا داعي للخطر أيضاً).
+> **تغيير مستقبلي بالـ schema.prisma:** نُنشئ migration حقيقي ولا نعدّل schema.sql يدوياً
+> (مبدئياً: `prisma migrate diff --from-empty --to-schema ...` للحصول على أساس، مع مراجعة يدوية).
+
+### 2ج) تجربة
+```powershell
+node --check *.mjs
 npm test       # لازم 8 اختبارات ناجحة
 pm2 start server.mjs --name kareem
 pm2 startup
@@ -55,8 +72,29 @@ curl -X POST http://localhost:3000/admin/tenants -H "Content-Type: application/j
 ```
 
 ## 7. نسخ احتياطي
-- `tenants.json` + `.env` + logs PM2 (`pm2 logs kareem`)
-- لا ترفع `.env` على GitHub أبداً.
+- البيانات في **PostgreSQL** (Supabase يوفّر PITR/PGBackups تلقائياً — فعّلها من لوحته).
+- لـ RDP المحلي: جدولة `pg_dump` يومية:
+  ```powershell
+  # مهمة مجدولة يومياً:
+  pg_dump "$env:DATABASE_URL" --format=custom -f "C:\bots\backups\wasl_$(Get-Date -Format yyyyMMdd).dump"
+  ```
+- `tenants.json` كان للنسخة القديمة قبل Postgres — أُزيل من الالتزام. لا ترفع `.env` على GitHub أبداً.
+
+## 8. قالب Meta للمتابعة خارج نافذة 24 ساعة ⏰
+> البوت لا يستطيع إرسال رسالة عادية بعد 24 ساعة من آخر رسالة العميل؛ يُرسل قالباً معتمداً
+> بدل ذلك، أو يُشعر الموظف (سلوك مجرب — لا رسائل مفقودة بصمت).
+1. Meta Business Suite ← **Account Tools ← Message Templates** (تظهر باللوحة من رابط الحساب).
+2. أنشئ قالباً بصنف **"Follow up / خدمة عملاء"** — مثال بالعربية:
+   `مرحباً {1} 👋 خدمة الترحيب غير تعمل؟ سنعود للرد قريباً.`
+3. راجع/اعتمد القالب (عادة دقائق).
+4. ضع اسمه كاملاً بصيغة **الاسم@اللغة** في `.env`:
+   `WA_FOLLOWUP_TEMPLATE=wasl_followup@ar`
+5. يمكنك تخصيصه لكل بوت عبر `tenant.features.followupTemplate`.
+
+## 9. إيقاف بوت (مستوى التنان فقط)
+- إيقاف/تشغيل يتم على **مستوى التنان** (زر في لوحة الأدمن `/admin`) — يُفعَّل عبر `tenant.enabled`.
+- **لا يوجد إيقاف لمستخدم مفرد** في بوابة العميل (لا حقول معطلة) — أي لوحة تتظاهر بذلك غير موجودة
+  في النظام. لعزل عميل مفرد: تواصل مع الإدارة أو اغلق بوت التنن كله.
 
 ## 8. الفرق عن Render
 | | Render Free | RDP خاص |

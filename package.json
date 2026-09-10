@@ -11,8 +11,10 @@
     "desktop": "electron .",
     "dist": "electron-builder --win",
     "test": "node agent.mjs --test",
-    "postinstall": "prisma generate",
-    "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script"
+    "postinstall": "node scripts/ensure-prisma.mjs",
+    "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
+    "db:sql": "node scripts/db-schema.mjs",
+    "db:init": "node scripts/db-init.mjs"
   },
   "keywords": [
     "whatsapp",

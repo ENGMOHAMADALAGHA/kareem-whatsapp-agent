@@ -368,7 +368,7 @@ async function loadOrders() {
       const b = document.createElement("b");
       b.textContent = o.id;
       d.appendChild(b);
-      const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة 🔍", canceled: "ملغي" }[o.status] || o.status;
+      const statusAr = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة 🔍", rejected: "مرفوض ❌", canceled: "ملغي" }[o.status] || o.status;
       d.appendChild(document.createTextNode(" — " + money(o.total, o.currency) + " — " + statusAr));
       if (o.status === "pending" || o.status === "proof_received" || o.status === "pending_review") {
         d.appendChild(document.createTextNode(" "));

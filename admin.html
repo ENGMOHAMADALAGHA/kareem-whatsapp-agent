@@ -726,6 +726,87 @@ async function sendReply() {
   loadConv();
 }
 
+const O_STATUS_AR = { pending: "بانتظار الدفع ⏳", paid: "مدفوع ✅", proof_received: "إيصال مستلم 📸", pending_review: "قيد المراجعة 🔍", rejected: "مرفوض ❌", canceled: "ملغي" };
+
+function proofSummary(o) {
+  const box = document.createElement("div");
+  box.className = "mt-1 rounded bg-slate-100 p-2 text-xs";
+  const p = o.proof || {};
+  if (p.auto === false) {
+    const t = document.createElement("div"); t.textContent = "📎 إيصال بدون تحقق آلي (انتظار يدوي)."; box.appendChild(t);
+  } else if (p.receipt && typeof p.receipt === "object") {
+    const r = p.receipt;
+    const rows = [];
+    if (r.amountPaid) rows.push(`المبلغ: ${r.amountPaid} ${r.currency || ""}`);
+    if (r.recipientIdentifier) rows.push(`المستلم: ${r.recipientIdentifier}`);
+    if (r.senderIdentifier) rows.push(`المُرسِل: ${r.senderIdentifier}`);
+    if (r.transactionDate) rows.push(`التاريخ: ${r.transactionDate}`);
+    if (r.referenceNumber) rows.push(`المرجع: ${r.referenceNumber}`);
+    if (r.confidenceScore) rows.push(`الثقة: ${Math.round(r.confidenceScore * 100)}%`);
+    rows.forEach((line) => {
+      const d = document.createElement("div"); d.textContent = line; box.appendChild(d);
+    });
+    if (p.reasons && p.reasons.length) {
+      const d = document.createElement("div");
+      d.className = "text-amber-700";
+      d.textContent = "⚠️ " + p.reasons.join("؛ ");
+      box.appendChild(d);
+    }
+  } else {
+    const t = document.createElement("div"); t.textContent = "📎 لقطة مرفقة."; box.appendChild(t);
+  }
+  if (p.review && p.review.reason) {
+    const d = document.createElement("div");
+    d.className = "text-red-600";
+    d.textContent = "❌ سبب الرفض: " + p.review.reason + " (" + (p.review.at || "").slice(0, 16) + ")";
+    box.appendChild(d);
+  }
+  return box;
+}
+
+function openReceipt(orderId) {
+  const url = "/admin/orders/" + orderId + "/proof-media?tenant=" + encodeURIComponent(cur.tenant);
+  const opts = { credentials: "include" };
+  if (isPortal && portalToken) opts.headers = { Authorization: "Bearer " + portalToken };
+  const img = document.createElement("img");
+  img.src = url; img.className = "max-h-64 rounded border";
+  img.onerror = () => { toast("تعذر تحميل الصورة (انتهت صلاحية أو محذوفة) — الملف لا يُخزَّن محلياً", "error"); };
+  // نافذة مؤقتة تعرض الصورة داخل الواجهة (تحافظ على المصادقة عبر fetch blob)
+  const host = document.createElement("div");
+  host.className = "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4";
+  const card = document.createElement("div");
+  card.className = "rounded-lg bg-white p-4 max-w-xl w-full";
+  const head = document.createElement("div");
+  head.className = "flex justify-between items-center mb-2";
+  const title = document.createElement("b"); title.textContent = "🖼️ إيصال " + orderId;
+  const close = document.createElement("button");
+  close.textContent = "✕"; close.className = "text-xl text-slate-500";
+  close.onclick = () => host.remove();
+  head.appendChild(title); head.appendChild(close);
+  const wrap = document.createElement("div");
+  wrap.className = "text-center";
+  wrap.appendChild(img);
+  card.appendChild(head); card.appendChild(wrap);
+  host.appendChild(card);
+  host.onclick = (ev) => { if (ev.target === host) host.remove(); };
+  document.body.appendChild(host);
+}
+
+async function rejectOrder(id, phone) {
+  const reason = prompt("💡 سبب رفض الإيصال (إلزامي — سيُرسل للعميل):", "");
+  if (reason === null) return;
+  if (!reason.trim()) { toast("سبب الرفض إلزامي", "error"); return rejectOrder(id, phone); }
+  try {
+    await api("/admin/orders/" + id + "/reject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: cur.tenant, reason: reason.trim() }),
+    });
+    toast("تم رفض الإيصال وإرسال السبب للعميل ❌", "success");
+    loadOrders();
+  } catch (e) { toast("فشل الرفض: " + e.message, "error"); }
+}
+
 async function loadOrders() {
   const j = await api("/admin/orders?tenant=" + encodeURIComponent(cur.tenant));
   const box = $("ordersList");
@@ -735,13 +816,27 @@ async function loadOrders() {
     const d = document.createElement("div");
     d.className = "border rounded p-2 text-sm";
     const b = document.createElement("b"); b.textContent = o.id; d.appendChild(b);
-    d.appendChild(document.createTextNode(" — " + o.phone + " — " + money(o.total, o.currency) + " — " + o.status));
-    if (o.proof) { const s = document.createElement("span"); s.className = "text-green-600"; s.textContent = " 📸 لقطة مرفقة"; d.appendChild(s); }
+    d.appendChild(document.createTextNode(" — " + o.phone + " — " + money(o.total, o.currency) + " — " + (O_STATUS_AR[o.status] || o.status)));
+    if (o.proof) {
+      if (o.proof.mediaId) {
+        const btn = document.createElement("button");
+        btn.className = "text-blue-600 text-xs font-bold mx-1"; btn.textContent = "🖼️ فتح الإيصال";
+        btn.onclick = () => openReceipt(o.id);
+        d.appendChild(document.createTextNode(" ")); d.appendChild(btn);
+      }
+      d.appendChild(proofSummary(o));
+    }
     if (o.status === "pending" || o.status === "proof_received" || o.status === "pending_review") {
       const btn = document.createElement("button");
       btn.className = "text-green-600 text-xs font-bold"; btn.textContent = " ✔ تأكيد الدفع";
       btn.onclick = () => confirmOrder(o.id);
       d.appendChild(document.createTextNode(" ")); d.appendChild(btn);
+    }
+    if (o.status === "proof_received" || o.status === "pending_review") {
+      const btn = document.createElement("button");
+      btn.className = "text-red-600 text-xs font-bold mx-1"; btn.textContent = " ❌ رفض الإيصال";
+      btn.onclick = () => rejectOrder(o.id, o.phone);
+      d.appendChild(btn);
     }
     box.appendChild(d);
   });
