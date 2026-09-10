@@ -115,7 +115,7 @@ function toast(msg, kind) {  const colors = { success: "#059669", error: "#dc262
   $("toastBox").appendChild(el);
   setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 320); }, 3200);
 }
-function promptDialog(title, msg, placeholder) {
+function promptDialog(title, msg, placeholder, value) {
   return new Promise((resolve) => {
     const ov = document.createElement("div");
     ov.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:200;padding:1rem";
@@ -131,6 +131,7 @@ function promptDialog(title, msg, placeholder) {
     const input = document.createElement("input");
     input.className = "field mb-2";
     input.placeholder = placeholder || "";
+    if (value) input.value = value;
     const row = document.createElement("div");
     row.className = "flex gap-2";
     const ok = document.createElement("button");
@@ -354,6 +355,24 @@ async function loadOrders() {
   } catch (e) { /* صامت */ }
 }
 const BK_STATUS_AR = { confirmed: "مؤكد ✅", waiting: "انتظار ⏳", canceled: "ملغي" };
+async function editCBk(b) {
+  const name = await promptDialog("تعديل الحجز", "اسم العميل:", "", b.name || "");
+  if (name === null) return;
+  const phone = await promptDialog("تعديل الحجز", "رقم الجوال:", "", b.phone || "");
+  if (phone === null) return;
+  const service = await promptDialog("تعديل الحجز", "الخدمة:", "", b.service || "");
+  if (service === null) return;
+  const day = await promptDialog("تعديل الحجز", "اليوم:", "", b.day || "");
+  if (day === null) return;
+  const slot = await promptDialog("تعديل الحجز", "الوقت:", "", b.slot || "");
+  if (slot === null) return;
+  toast("جاري حفظ التعديل...", "info");
+  try {
+    await api("/admin/appointments/" + encodeURIComponent(b.id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, name, phone, service, day, slot }) });
+    toast("تم حفظ التعديل ✅", "success");
+    loadBooking();
+  } catch (e) { toast("تعذر الحفظ: " + e.message, "error"); }
+}
 async function loadBooking() {
   try {
     const j = await api("/admin/appointments?tenant=" + encodeURIComponent(cur.tenant));
@@ -391,6 +410,7 @@ async function loadBooking() {
           act.appendChild(btn);
           act.appendChild(document.createTextNode(" "));
         };
+        mk("✏ تعديل", "text-slate-600 font-bold", () => editCBk(b));
         mk("⏰ تذكير", "text-violet-600 font-bold", async () => {
           try {
             await api("/admin/appointments/" + encodeURIComponent(b.id) + "/remind", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });

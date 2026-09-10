@@ -63,6 +63,30 @@ export async function syncBookingToGoogleSheets(booking) {
   }
 }
 
+// ── تعديل حجز: أي حقل (اسم/هاتف/خدمة/يوم/وقت) — اليوم والوقت يحترمان القيد الفريد ──
+export async function updateAppointment(id, tenantId, patch = {}) {
+  const data = {};
+  if (patch.name !== undefined) data.name = String(patch.name).trim() || undefined;
+  if (patch.phone !== undefined && String(patch.phone).trim()) data.phone = String(patch.phone).trim();
+  if (patch.service !== undefined) data.service = String(patch.service).trim() || "موعد";
+  if (patch.day !== undefined && String(patch.day).trim()) data.day = String(patch.day).trim();
+  if (patch.slot !== undefined && String(patch.slot).trim()) data.slot = String(patch.slot).trim();
+  if (!Object.keys(data).length) throw new Error("لا حقول للتعديل");
+  try {
+    const row = await tenantDb(tenantId).appointment.update({ where: { id }, data });
+    return rowToBooking(row);
+  } catch (e) {
+    if (e?.code === "P2002") {
+      const err = new Error("SLOT_TAKEN");
+      err.code = "SLOT_TAKEN";
+      err.meta = { tenantId, ...data };
+      throw err;
+    }
+    if (e?.code === "P2025" || e?.code === "TENANT_DENIED") return null;
+    throw e;
+  }
+}
+
 // ── إعادة جدولة: نقل الحجز لموعد جديد مع احترام القيد الفريد ──
 export async function rescheduleAppointment(id, tenantId, { day, slot }) {
   if (!day || !slot) throw new Error("day و slot مطلوبان");

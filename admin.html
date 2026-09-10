@@ -565,6 +565,7 @@ function promptDialog(title, msg, opts) {
     const input = document.createElement("input");
     input.className = "field mb-2";
     input.placeholder = opts.placeholder || "";
+    if (opts.value) input.value = opts.value;
     if (opts.password) input.type = "password";
     else input.dir = "ltr";
     const row = document.createElement("div");
@@ -804,6 +805,7 @@ async function loadBooking() {
       act.appendChild(document.createTextNode(" "));
     };
     if (b.status === "confirmed") {
+      mk("✏ تعديل", "text-slate-600 font-bold", () => editBk(b));
       mk("⏰ تذكير", "text-violet-600 font-bold", () => remindBk(b.id));
       mk("🔁 نقل", "text-blue-600 font-bold", () => rescheduleBk(b.id));
       mk("إلغاء", "text-red-500", () => cancelBk(b.id));
@@ -845,6 +847,26 @@ async function addBk() {
     toast("تم إنشاء الحجز ✅", "success");
     loadBooking();
   } catch (e) { toast("تعذر الإنشاء: " + e.message, "error"); }
+}
+
+// تعديل حجز كامل — الحقول معبأة بالقيم الحالية، الفارغ = إبقاء
+async function editBk(b) {
+  const name = await promptDialog("تعديل الحجز", "اسم العميل:", { value: b.name || "" });
+  if (name === null) return;
+  const phone = await promptDialog("تعديل الحجز", "رقم الجوال:", { value: b.phone || "" });
+  if (phone === null) return;
+  const service = await promptDialog("تعديل الحجز", "الخدمة:", { value: b.service || "" });
+  if (service === null) return;
+  const day = await promptDialog("تعديل الحجز", "اليوم:", { value: b.day || "" });
+  if (day === null) return;
+  const slot = await promptDialog("تعديل الحجز", "الوقت:", { value: b.slot || "" });
+  if (slot === null) return;
+  toast("جاري حفظ التعديل...", "info");
+  try {
+    await api("/admin/appointments/" + encodeURIComponent(b.id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, name, phone, service, day, slot }) });
+    toast("تم حفظ التعديل ✅", "success");
+    loadBooking();
+  } catch (e) { toast("تعذر الحفظ: " + e.message, "error"); }
 }
 
 async function rescheduleBk(id) {  const day = await promptDialog("نقل الحجز", "اليوم الجديد (مثال: الغد، 2026-09-15):", { placeholder: "اليوم" });

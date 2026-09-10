@@ -603,7 +603,25 @@ load();
     }));
     res.send(bookingsToCSV(mapped));
   });
-  // إعادة جدولة حجز (يحترم القيد الفريد — تعارض → 409 مع البدائل)
+  // تعديل حجز (اسم/هاتف/خدمة/يوم/وقت) — تعارض الموعد → 409 مع البدائل
+  app.patch("/admin/appointments/:id", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const { updateAppointment, freeSlots } = await import("../../../bookings.mjs");
+    try {
+      const b = await updateAppointment(req.params.id, tenantId, req.body || {});
+      if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
+      logEvent("booking_updated", { tenantId, bookingId: b.id }).catch(() => {});
+      res.json({ ok: true, booking: b });
+    } catch (e) {
+      if (e?.code === "SLOT_TAKEN") {
+        const tenant = await getTenantFull(tenantId);
+        const free = await freeSlots(tenantId, req.body?.day, tenant?.features?.bookingSlots).catch(() => []);
+        return res.status(409).json({ ok: false, error: "الموعد الجديد محجوز", free });
+      }
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
   app.post("/admin/appointments/:id/reschedule", async (req, res) => {
     const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
     if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });

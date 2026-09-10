@@ -106,6 +106,7 @@ POST /admin/cart-remind-run | /admin/remind-run (مجدول: تذكير + سلة
 GET  /admin/inbox | /admin/inbox/:t/:phone (عزل عميل) | /admin/inbox.html
 POST /admin/takeover | /admin/send       → إسكات يدوي + إرسال يدوي
 POST /admin/appointments/:id/cancel      → حذف + تحرير الموعد + تعبئة انتظار
+PATCH /admin/appointments/:id            → تعديل أي حقل (تعارض → 409 + بدائل)
 POST /admin/appointments                 → حجز يدوي (تعارض → 409 + بدائل)
 POST /admin/appointments/:id/reschedule  → نقل موعد (تعارض → 409 + بدائل)
 POST /admin/appointments/:id/remind      → تذكير يدوي فوري
