@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
+import { normalizePhone } from "./src/utils/phone.mjs";
 
 function secret() {
   const s = process.env.JWT_SECRET;
@@ -14,6 +15,7 @@ function secret() {
 // إنشاء مستخدم موجود عبر /admin/users مرفوض (409) لمنع الاستيلاء على الحسابات.
 export async function getClientUser(tenantId, phone) {
   if (!tenantId || !phone) return null;
+  phone = normalizePhone(phone);
   return tenantDb(tenantId).tenantUser.findUnique({
     where: { tenantId_phone: { tenantId, phone } },
   });
@@ -21,6 +23,7 @@ export async function getClientUser(tenantId, phone) {
 
 export async function createClientUser({ tenantId, name, phone, password, allowReset = false }) {
   if (!tenantId || !phone || !password) throw new Error("tenantId و phone و password مطلوبة");
+  phone = normalizePhone(phone);
   if (String(password).length < 6) throw new Error("كلمة السر 6 أحرف على الأقل");
   if (!allowReset) {
     const existing = await getClientUser(tenantId, phone);
@@ -43,6 +46,7 @@ export async function createClientUser({ tenantId, name, phone, password, allowR
 
 export async function verifyClientUser(tenantId, phone, password) {
   if (!tenantId || !phone) return null;
+  phone = normalizePhone(phone);
   const u = await tenantDb(tenantId).tenantUser.findUnique({
     where: { tenantId_phone: { tenantId, phone } },
     include: { tenant: true },
@@ -85,6 +89,7 @@ export function verifyClientToken(token) {
 // —— نسيت كلمة السر: كود من 6 أرقام عبر واتساب ——
 export async function startPasswordReset(tenantId, phone, sendFn) {
   if (!tenantId || !phone) return { ok: false };
+  phone = normalizePhone(phone);
   const u = await tenantDb(tenantId).tenantUser.findUnique({
     where: { tenantId_phone: { tenantId, phone } },
   });
@@ -101,6 +106,7 @@ export async function startPasswordReset(tenantId, phone, sendFn) {
 
 export async function finishPasswordReset(tenantId, phone, code, newPassword) {
   if (!tenantId || !phone) throw new Error("بيانات ناقصة");
+  phone = normalizePhone(phone);
   if (!newPassword || String(newPassword).length < 6) throw new Error("كلمة السر 6 أحرف على الأقل");
   const u = await tenantDb(tenantId).tenantUser.findUnique({
     where: { tenantId_phone: { tenantId, phone } },

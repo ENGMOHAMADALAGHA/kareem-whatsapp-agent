@@ -1,12 +1,14 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 import crypto from "node:crypto";
 import { db } from "./db.mjs";
+import { normalizePhone } from "./src/utils/phone.mjs";
 
 const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
 // كل الدوال هنا تمر عبر tenantDb — لا وصول مباشر لـ Prisma.
 
 export async function createOrder({ tenantId, phone, name, items, total, currency = "USD" }) {
+  phone = normalizePhone(phone);
   const row = await tenantDb(tenantId).order.create({
     data: {
       id: nid("ord"),

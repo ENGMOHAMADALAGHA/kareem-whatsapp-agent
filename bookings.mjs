@@ -1,9 +1,11 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 import crypto from "node:crypto";
+import { normalizePhone } from "./src/utils/phone.mjs";
 
 const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
 export async function bookAppointment({ tenantId, phone, name, service, day, slot }) {
+  phone = normalizePhone(phone);
   // DB-level uniqueness (@@unique tenantId/day/slot) is the last line of defense.
   // Map P2002 → clean SLOT_TAKEN error so callers can offer freeSlots().
   try {
@@ -202,6 +204,7 @@ export async function freeSlots(tenantId, day, allSlots) {
 // قائمة الانتظار: حجوزات بحالة waiting (تُعبأ تلقائياً عند الإلغاء)
 // ملاحظة: slot فريد لكل صف حتى لا يتعارض مع @@unique(tenantId, day, slot)
 export async function joinWaitingList({ tenantId, phone, name, service }) {
+  phone = normalizePhone(phone);
   const row = await tenantDb(tenantId).appointment.create({
     data: {
       id: nid("wt"),

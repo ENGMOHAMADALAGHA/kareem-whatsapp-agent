@@ -2,6 +2,7 @@
 // امتثال واتساب: إلغاء الاشتراك + تنبيه الموظف + قوالب نافذة 24h
 // ──────────────────────────────────────────────
 import { STAFF_PHONE, WA_FOLLOWUP_TEMPLATE } from "../config/env.mjs";
+import { samePhone } from "../utils/phone.mjs";
 
 // كلمات إلغاء الاشتراك (عربي/إنجليزي) — إلزامية لمنع حظر البث
 const OPT_OUT_RE = /^(إلغاء|الغاء|الغاء الاشتراك|إلغاء الاشتراك|أوقف|اوقف|وقف|لا تراسلني|احذفني|stop|unsubscribe|cancel|opt ?out|stop messaging)$/i;
@@ -58,19 +59,14 @@ export async function notifyStaff(tenant, text, opts = {}) {
   const to = tenant?.features?.staffPhone || STAFF_PHONE;
   const full = `🔔 [${tenant?.botName || tenant?.id || "bot"}] ${text}`;
   // حماية "يكلم نفسه": إذا المستلم هو نفس المرسل (تست بنفس الرقم) لا ترسل لنفس الدردشة
-  // تقارن بآخر 9 أرقام لتحمل صيغ 962... و079... معاً — الحدث يبقى موثقاً بالسجل
-  if (opts.except && to) {
-    const da = String(to).replace(/\D/g, "");
-    const db = String(opts.except).replace(/\D/g, "");
-    const same = da && db && (da === db || (da.slice(-9) === db.slice(-9) && da.slice(-9).length >= 9));
-    if (same) {
-      try {
-        const { logEvent } = await import("../../crm.mjs");
-        await logEvent("staff_ping", { tenantId: tenant?.id, text: String(text).slice(0, 300), skipped: "self" }).catch(() => {});
-      } catch { /* تجاهل */ }
-      console.log(`  🚨 تنبيه موظف مُتجاوَز (نفس رقم المرسل — مسجل بالسجل فقط)`);
-      return { ok: false, reason: "self-recipient" };
-    }
+  // samePhone يتحمل كل الصيغ (079/00962/+962) — الحدث يبقى موثقاً بالسجل
+  if (opts.except && to && samePhone(to, opts.except)) {
+    try {
+      const { logEvent } = await import("../../crm.mjs");
+      await logEvent("staff_ping", { tenantId: tenant?.id, text: String(text).slice(0, 300), skipped: "self" }).catch(() => {});
+    } catch { /* تجاهل */ }
+    console.log(`  🚨 تنبيه موظف مُتجاوَز (نفس رقم المرسل — مسجل بالسجل فقط)`);
+    return { ok: false, reason: "self-recipient" };
   }
   try {
     const { logEvent } = await import("../../crm.mjs");

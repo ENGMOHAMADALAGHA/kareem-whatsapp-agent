@@ -1,4 +1,5 @@
 import { getTenantFull, listTenants, addTenant } from "../../../tenants.mjs";
+import { normalizePhone } from "../../utils/phone.mjs";
 import {
   bookAppointment,
   listAppointments,
@@ -321,6 +322,8 @@ export function registerAdminRoutes(app) {
       return res.status(400).json({ ok: false, error: "tenantId و text و phones[] مطلوبة" });
     }
     if (phones.length > 50) return res.status(400).json({ ok: false, error: "الحد الأقصى 50 رقم لكل بث" });
+    // توحيد كل الأرقام E.164 — أي صيغة (079/00962/+) تعمل
+    const normPhones = [...new Set(phones.map((p) => normalizePhone(p)).filter(Boolean))];
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     const { isTenantActive } = await import("../../../tenants.mjs");
@@ -331,7 +334,7 @@ export function registerAdminRoutes(app) {
     const { isOptedOut } = await import("../../compliance/messaging.mjs");
     const eligible = [];
     const skippedOptOut = [];
-    for (const phone of phones) {
+    for (const phone of normPhones) {
       if (await isOptedOut(tenantId, phone)) skippedOptOut.push(phone);
       else eligible.push(phone);
     }
@@ -346,8 +349,8 @@ export function registerAdminRoutes(app) {
       }
       await new Promise((r) => setTimeout(r, 800)); // تجنب rate limit
     }
-    const rec = await saveBroadcast({ tenantId, text, phones, results });
-    logEvent("broadcast", { tenantId, count: phones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id, skippedOptOut: skippedOptOut.length }).catch(() => {});
+    const rec = await saveBroadcast({ tenantId, text, phones: normPhones, results });
+    logEvent("broadcast", { tenantId, count: normPhones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id, skippedOptOut: skippedOptOut.length }).catch(() => {});
     res.json({ ok: true, broadcast: rec, skippedOptOut });
   });
   app.get("/admin/broadcasts", async (req, res) => {
@@ -471,7 +474,7 @@ export function registerAdminRoutes(app) {
       return res.status(403).json({ ok: false, error: "غير مصرح — هذه المحادثة ليست لك" });
     }
     const tenantId = req.clientTenant || req.params.tenantId;
-    const { phone } = req.params;
+    const phone = normalizePhone(req.params.phone);
     res.json({
       tenantId, phone,
       takeover: await isTakeover(tenantId, phone),
@@ -479,15 +482,18 @@ export function registerAdminRoutes(app) {
     });
   });
   app.post("/admin/takeover", async (req, res) => {
-    const { tenantId, phone, enabled, by } = req.body || {};
+    let { tenantId, phone, enabled, by } = req.body || {};
     if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
+    phone = normalizePhone(phone);
     await setTakeover(tenantId, phone, !!enabled, by);
     logEvent(!!enabled ? "takeover" : "handover", { tenantId, phone, by }).catch(() => {});
     res.json({ ok: true, takeover: await isTakeover(tenantId, phone) });
   });
   app.post("/admin/send", async (req, res) => {
-    const { tenantId, phone, text } = req.body || {};
+    const { tenantId, text } = req.body || {};
+    let { phone } = req.body || {};
     if (!tenantId || !phone || !text) return res.status(400).json({ ok: false, error: "tenantId و phone و text مطلوبة" });
+    phone = normalizePhone(phone);
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
     try {

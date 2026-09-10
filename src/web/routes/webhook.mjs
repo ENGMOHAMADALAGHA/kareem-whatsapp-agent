@@ -49,6 +49,7 @@ import {
 import { getHistory, pushHistory, isDuplicateMessageAsync, updateLastAssistant } from "../../memory/conversations.mjs";
 import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox/service.mjs";
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
+import { normalizePhone } from "../../utils/phone.mjs";
 import { updateTenant } from "../../../tenants.mjs";
 import { webhookQueue, voiceQueue } from "../../jobs/queue.mjs";
 import { checkLimit, senderKey } from "../../security/rateLimit.mjs";
@@ -128,7 +129,7 @@ async function processWebhookBody(body) {
           hasMessage = true;
 
           // استخراج رقم العميل ونص الرسالة (يدعم الأزرار + الفويس)
-          const from = msg.from; // رقم العميل
+          const from = normalizePhone(msg.from); // رقم العميل — موحد E.164 دائماً
           // حد المعدل: 30 رسالة/دقيقة لكل رقم (حماية من الحلقات وتكلفة AI)
           const rl = checkLimit(senderKey(from), 30, 60 * 1000);
           if (!rl.allowed) {

@@ -6,6 +6,7 @@ import { resolveTenantInput } from "../../tenants.mjs";
 import { WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, OUTBOUND_TIMEOUT_MS, WA_TEMPLATE_LANG } from "../config/env.mjs";
 import { checkLimit, tenantSendKey } from "../security/rateLimit.mjs";
 import { sendWithRetry } from "./outbound.mjs";
+import { normalizePhone } from "../utils/phone.mjs";
 
 // حد الإرسال لكل بوت: 60 رسالة/دقيقة (حماية من حظر Meta)
 async function guardSend(tenant, phoneId) {
@@ -77,6 +78,7 @@ async function graphPost(url, token, body, label) {
 }
 
 export async function sendWhatsAppMessage(to, text, tenantInput = null) {
+  to = normalizePhone(to); // E.164 مركزياً — Meta ترفض أي صيغة أخرى
   const { tenant, token, phoneId } = await creds(tenantInput);
   await guardSend(tenant, phoneId);
 
@@ -106,6 +108,7 @@ export async function sendWhatsAppMessage(to, text, tenantInput = null) {
 
 // إرسال generic (نص / أزرار / صورة) - نفس التوكن لكل بوت
 async function sendPayload(to, payload, tenantInput = null) {
+  to = normalizePhone(to); // Meta تقبل E.164 فقط — أي صيغة تُطبَّع هنا مركزياً
   const { tenant, token, phoneId } = await creds(tenantInput);
   await guardSend(tenant, phoneId);
 
