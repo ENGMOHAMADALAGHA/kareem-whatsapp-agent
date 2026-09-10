@@ -13,7 +13,10 @@ export async function bookAppointment({ tenantId, phone, name, service, day, slo
         phone, name: name || phone, service, day, slot,
       },
     });
-    return rowToBooking(row);
+    const booking = rowToBooking(row);
+    // مزامنة Sheets بالخلفية — فشلها لا يكسر التدفق أبداً (fire-and-forget)
+    syncBookingToGoogleSheets(booking).catch(() => {});
+    return booking;
   } catch (e) {
     if (e?.code === "P2002") {
       const err = new Error("SLOT_TAKEN");
@@ -23,6 +26,73 @@ export async function bookAppointment({ tenantId, phone, name, service, day, slo
     }
     throw e;
   }
+}
+
+// ── مزامنة لحظية مع Google Sheets (عبر Make/n8n/Apps Script webhook) ──
+// تُستدعى عند كل حجز مؤكد. آمنة تماماً: مهلة 10ث + كل الأخطاء مبلوعة داخلياً.
+export async function syncBookingToGoogleSheets(booking) {
+  try {
+    const url = process.env.CRM_WEBHOOK_URL;
+    if (!url || !booking) return { ok: false, reason: "skipped" };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          event: "appointment_created",
+          tenant_id: booking.tenantId,
+          booking_id: booking.id,
+          customer_name: booking.name || booking.phone,
+          phone: booking.phone,
+          service: booking.service || "",
+          date_time: `${booking.day || ""} ${booking.slot || ""}`.trim(),
+          created_at: booking.createdAt instanceof Date ? booking.createdAt.toISOString() : new Date(booking.createdAt || Date.now()).toISOString(),
+        }),
+      });
+      if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+      return { ok: true };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    console.error(`  ⚠️ فشل مزامنة Sheets للحجز ${booking?.id}: ${e.message}`);
+    return { ok: false, reason: e.message };
+  }
+}
+
+// ── إعادة جدولة: نقل الحجز لموعد جديد مع احترام القيد الفريد ──
+export async function rescheduleAppointment(id, tenantId, { day, slot }) {
+  if (!day || !slot) throw new Error("day و slot مطلوبان");
+  try {
+    const row = await tenantDb(tenantId).appointment.update({
+      where: { id },
+      data: { day, slot, remindedAt: null },
+    });
+    return rowToBooking(row);
+  } catch (e) {
+    if (e?.code === "P2002") {
+      const err = new Error("SLOT_TAKEN");
+      err.code = "SLOT_TAKEN";
+      err.meta = { tenantId, day, slot };
+      throw err;
+    }
+    if (e?.code === "P2025") return null;
+    throw e;
+  }
+}
+
+// ── CSV للحجوزات (Excel مباشرة — UTF-8 BOM للعربية) ──
+export function bookingsToCSV(rows) {
+  const header = "id,customer_name,phone,service,day,slot,status,reminded_at,created_at";
+  const lines = (rows || []).map((b) =>
+    [b.id, b.name || "", b.phone || "", b.service || "", b.day || "", b.slot || "", b.status || "", b.remindedAt || "", b.createdAt || ""]
+      .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
+      .join(",")
+  );
+  return "\uFEFF" + [header, ...lines].join("\n");
 }
 
 export async function listAppointments(tenantId) {

@@ -549,4 +549,73 @@ load();
     const list = await listWaiting(scope.global ? undefined : scope.tenant, req.query.service);
     res.json({ count: list.length, waiting: list });
   });
+  // تصدير الحجوزات Excel/CSV (بوت + مدى تاريخ اختياري على createdAt)
+  app.get("/admin/appointments/export.csv", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const { bookingsToCSV } = await import("../../../bookings.mjs");
+    const { tenantDb, systemDb } = await import("../../security/tenantGuard.mjs");
+    const T = scope.global ? systemDb("bookings:export") : tenantDb(scope.tenant);
+    const where = {};
+    const from = req.query.from ? new Date(req.query.from) : null;
+    const to = req.query.to ? new Date(req.query.to) : null;
+    if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+      return res.status(400).json({ ok: false, error: "صيغة التاريخ غير صالحة (YYYY-MM-DD)" });
+    }
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = from;
+      if (to) where.createdAt.lte = new Date(to.getTime() + 24 * 60 * 60 * 1000 - 1);
+    }
+    const rows = await T.appointment.findMany({ where, orderBy: { createdAt: "desc" }, take: 2000 });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=appointments.csv");
+    const mapped = rows.map((r) => ({
+      id: r.id, name: r.name, phone: r.phone, service: r.service, day: r.day,
+      slot: r.slot, status: r.status, remindedAt: r.remindedAt, createdAt: r.createdAt,
+    }));
+    res.send(bookingsToCSV(mapped));
+  });
+  // إعادة جدولة حجز (يحترم القيد الفريد — تعارض → 409 مع البدائل)
+  app.post("/admin/appointments/:id/reschedule", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const { day, slot } = req.body || {};
+    if (!day || !slot) return res.status(400).json({ ok: false, error: "day و slot مطلوبان" });
+    const { rescheduleAppointment, freeSlots } = await import("../../../bookings.mjs");
+    try {
+      const b = await rescheduleAppointment(req.params.id, tenantId, { day, slot });
+      if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
+      logEvent("booking_rescheduled", { tenantId, bookingId: b.id, day, slot }).catch(() => {});
+      res.json({ ok: true, booking: b });
+    } catch (e) {
+      if (e?.code === "SLOT_TAKEN") {
+        const tenant = await getTenantFull(tenantId);
+        const free = await freeSlots(tenantId, day, tenant?.features?.bookingSlots).catch(() => []);
+        return res.status(409).json({ ok: false, error: "الموعد الجديد محجوز", free });
+      }
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  // تذكير يدوي لحجز واحد (يرسل الآن ويعلّم)
+  app.post("/admin/appointments/:id/remind", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const { tenantDb } = await import("../../security/tenantGuard.mjs");
+    const b = await tenantDb(tenantId).appointment.findFirst({ where: { id: req.params.id } }).catch(() => null);
+    if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
+    const tenant = await getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const { markReminded } = await import("../../../bookings.mjs");
+    const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
+    try {
+      await sendWhatsAppMessage(b.phone, msg, tenant);
+      await pushHistory(b.phone, "assistant", msg, tenant);
+      await markReminded(b.id, tenantId);
+      logEvent("booking_reminded", { tenantId, phone: b.phone, bookingId: b.id, manual: true }).catch(() => {});
+      res.json({ ok: true, sent: b.id });
+    } catch (e) {
+      res.status(502).json({ ok: false, error: e.message });
+    }
+  });
 }

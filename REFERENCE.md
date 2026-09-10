@@ -106,6 +106,9 @@ POST /admin/cart-remind-run | /admin/remind-run (مجدول: تذكير + سلة
 GET  /admin/inbox | /admin/inbox/:t/:phone (عزل عميل) | /admin/inbox.html
 POST /admin/takeover | /admin/send       → إسكات يدوي + إرسال يدوي
 POST /admin/appointments/:id/cancel      → حذف + تحرير الموعد + تعبئة انتظار
+POST /admin/appointments/:id/reschedule  → نقل موعد (تعارض → 409 + بدائل)
+POST /admin/appointments/:id/remind      → تذكير يدوي فوري
+GET  /admin/appointments/export.csv      → تصدير Excel (بوت + مدى تاريخ)
 GET  /admin/waiting | /admin/queue
 GET  /admin/  → admin.html (سوبر) | GET /portal/ → client.html (عميل)
 POST /portal/login|forgot|reset          → دخول JWT 30 يوم + استعادة واتساب
@@ -156,6 +159,8 @@ DATABASE_URL (pooler 6543 إجباري)
 ## 8. المعلق (القادم)
 
 - [ ] أول رقم حقيقي عبر Coexistence + أول عيادة دافعة (المعركة الحالية)
+- [x] مزامنة Sheets لحظية عند كل حجز مؤكد (`syncBookingToGoogleSheets` — فشل آمن، `CRM_WEBHOOK_URL`)
+- [x] جدول حجوزات إداري (أعمدة + إلغاء/تذكير يدوي/نقل + تصدير CSV + تحديث عند فتح التبويب)
 - [ ] `قف/شغّل` أوامر واتساب للطاقم
 - [ ] Embedded Signup + توثيق مزوّد Meta
 - [ ] RAG معرفة + قوالب معتمدة + Redis فعلي + RDP/Pro
