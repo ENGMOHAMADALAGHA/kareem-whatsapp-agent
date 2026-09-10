@@ -252,7 +252,7 @@
       <button id="bkAdd" class="text-xs px-2 py-1 rounded bg-blue-600 text-white font-bold">＋ حجز يدوي</button>
       <input id="bkFrom" type="date" class="border rounded p-1 text-xs" title="من تاريخ">
       <input id="bkTo" type="date" class="border rounded p-1 text-xs" title="إلى تاريخ">
-      <a id="bkExport" href="#" class="text-xs px-2 py-1 rounded bg-green-600 text-white font-bold">📥 تصدير Excel (CSV)</a>
+      <button id="bkExport" class="text-xs px-2 py-1 rounded bg-green-600 text-white font-bold">📥 تصدير Excel (CSV)</button>
       <button id="remindBtn" class="px-3 py-1 rounded bg-violet-600 text-white text-sm">⏰ تشغيل التذكير</button>
       <button id="bkRefresh" class="px-2 py-1 rounded bg-slate-200 text-xs font-bold">↻ تحديث</button>
     </div>
@@ -816,10 +816,28 @@ async function loadBooking() {
 }
 
 function updateBkExport() {
-  const q = "tenant=" + encodeURIComponent(cur.tenant || "") +
-    ($("bkFrom").value ? "&from=" + encodeURIComponent($("bkFrom").value) : "") +
-    ($("bkTo").value ? "&to=" + encodeURIComponent($("bkTo").value) : "");
-  $("bkExport").href = "/admin/appointments/export.csv?" + q;
+  // الزر ينزّل عبر fetch (مصادقة الجلسة) بدل رابط مباشر قد يفتقد التوكن
+  return;
+}
+async function downloadBkExport() {
+  toast("جاري تجهيز الملف...", "info");
+  try {
+    let url = "/admin/appointments/export.csv?tenant=" + encodeURIComponent(cur.tenant || "");
+    if ($("bkFrom").value) url += "&from=" + encodeURIComponent($("bkFrom").value);
+    if ($("bkTo").value) url += "&to=" + encodeURIComponent($("bkTo").value);
+    const headers = {};
+    if (isPortal && portalToken) headers["Authorization"] = "Bearer " + portalToken;
+    const r = await fetch(url, { credentials: "include", headers });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "appointments-" + (cur.tenant || "all") + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+    toast("تم التنزيل ✅", "success");
+  } catch (e) { toast("تعذر التصدير: " + e.message, "error"); }
 }
 
 async function remindBk(id) {
@@ -1475,6 +1493,7 @@ $("botBack").onclick = () => wizShow(wizStep - 1);
 $("botsRefresh").onclick = loadBots;
 $("botSearch").oninput = applyBotFilter;
 $("bkRefresh").onclick = loadBooking;
+$("bkExport").onclick = downloadBkExport;
 $("bkAdd").onclick = addBk;
 $("bkFrom").onchange = updateBkExport;
 $("bkTo").onchange = updateBkExport;

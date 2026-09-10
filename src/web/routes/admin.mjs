@@ -532,7 +532,10 @@ load();
   });
   app.post("/admin/remind-run", async (req, res) => {
     const afterMinutes = Number(req.body?.afterMinutes ?? 1);
-    const due = await dueReminders({ afterMinutes });
+    const scopeTenant = req.clientTenant || null;
+    const dueAll = await dueReminders({ afterMinutes });
+    // عزل العميل: بوابة العميل تشغّل تذكير بوته فقط — أبداً كل البوتات
+    const due = scopeTenant ? dueAll.filter((b) => b.tenantId === scopeTenant) : dueAll;
     const sent = [];
     for (const b of due) {
       const tenant = await getTenantFull(b.tenantId);

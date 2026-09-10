@@ -80,9 +80,14 @@
     </div>
     <div id="pane-orders" class="hidden card p-3"><h3 class="font-bold mb-2">الطلبات</h3><div id="cOrders" class="space-y-2"></div></div>
     <div id="pane-booking" class="hidden card p-3">
-      <div class="flex items-center gap-2 mb-2">
+      <div class="flex items-center gap-2 mb-2 flex-wrap">
         <h3 class="font-bold">الحجوزات</h3>
         <button id="cBkAdd" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#2563eb,#1e40af)">＋ حجز يدوي</button>
+        <input id="cBkFrom" type="date" class="border rounded p-1 text-xs" title="من تاريخ">
+        <input id="cBkTo" type="date" class="border rounded p-1 text-xs" title="إلى تاريخ">
+        <button id="cBkExport" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#059669,#065f46)">📥 تصدير Excel</button>
+        <button id="cBkRemindAll" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#7c3aed,#4c1d95)">⏰ تشغيل التذكير</button>
+        <button id="cBkRefresh" class="text-xs px-2 py-1 rounded bg-slate-200 font-bold">↻ تحديث</button>
       </div>
       <div class="overflow-auto">
         <table class="w-full text-sm">
@@ -321,6 +326,35 @@ $("cBkAdd").onclick = async () => {
     toast("تم إنشاء الحجز ✅", "success");
     loadBooking();
   } catch (e) { toast("تعذر الإنشاء: " + e.message, "error"); }
+};
+async function downloadExport() {
+  // تنزيل عبر fetch (يحمل توكن البوابة) بدل رابط مباشر بلا مصادقة
+  toast("جاري تجهيز الملف...", "info");
+  try {
+    let url = "/admin/appointments/export.csv?tenant=" + encodeURIComponent(cur.tenant);
+    if ($("cBkFrom").value) url += "&from=" + encodeURIComponent($("cBkFrom").value);
+    if ($("cBkTo").value) url += "&to=" + encodeURIComponent($("cBkTo").value);
+    const r = await fetch(url, { headers: token ? { Authorization: "Bearer " + token } : {} });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "appointments-" + cur.tenant + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+    toast("تم التنزيل ✅", "success");
+  } catch (e) { toast("تعذر التصدير: " + e.message, "error"); }
+}
+$("cBkExport").onclick = downloadExport;
+$("cBkRefresh").onclick = loadBooking;
+$("cBkRemindAll").onclick = async () => {
+  toast("جاري تشغيل التذكير لبوتك...", "info");
+  try {
+    const j = await api("/admin/remind-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+    toast("تم التذكير: " + ((j.sent || []).length) + " موعد", "success");
+    loadBooking();
+  } catch (e) { toast("فشل التذكير: " + e.message, "error"); }
 };
 async function loadOrders() {
   try {
