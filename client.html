@@ -79,7 +79,17 @@
       </div>
     </div>
     <div id="pane-orders" class="hidden card p-3"><h3 class="font-bold mb-2">الطلبات</h3><div id="cOrders" class="space-y-2"></div></div>
-    <div id="pane-booking" class="hidden card p-3"><h3 class="font-bold mb-2">الحجوزات</h3><div id="cBooking" class="space-y-2"></div></div>
+    <div id="pane-booking" class="hidden card p-3">
+      <h3 class="font-bold mb-2">الحجوزات</h3>
+      <div class="overflow-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="bg-slate-100 text-xs">
+            <th class="border p-2">رقم الحجز</th><th class="border p-2">العميل</th><th class="border p-2">الهاتف</th><th class="border p-2">الخدمة</th><th class="border p-2">التاريخ والوقت</th><th class="border p-2">الحالة</th><th class="border p-2">إجراءات</th>
+          </tr></thead>
+          <tbody id="cBookingBody"></tbody>
+        </table>
+      </div>
+    </div>
     <div id="pane-ratings" class="hidden card p-3"><h3 class="font-bold mb-2">التقييمات</h3><div id="cRatings"></div></div>
   </div>
 </div>
@@ -95,13 +105,48 @@ const money = (n, c) => {
   const cur2 = String(c || "JOD").toUpperCase();
   return (cur2 === "USD" || cur2 === "$") ? "$" + n : n + " د.أ";
 };
-function toast(msg, kind) {
-  const colors = { success: "#059669", error: "#dc2626", info: "#2563eb" };
+function toast(msg, kind) {  const colors = { success: "#059669", error: "#dc2626", info: "#2563eb" };
   const el = document.createElement("div");
   el.style.cssText = "background:" + (colors[kind] || colors.info) + ";color:#fff;font-size:.8rem;font-weight:700;padding:.55rem 1.1rem;border-radius:.8rem;box-shadow:0 10px 25px -8px rgba(0,0,0,.4);max-width:90vw";
   el.textContent = msg;
   $("toastBox").appendChild(el);
   setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 320); }, 3200);
+}
+function promptDialog(title, msg, placeholder) {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:200;padding:1rem";
+    const card = document.createElement("div");
+    card.className = "card p-5";
+    card.style.width = "22rem";
+    const h = document.createElement("h3");
+    h.className = "font-bold mb-1";
+    h.textContent = title;
+    const p = document.createElement("p");
+    p.className = "text-sm text-slate-600 mb-2";
+    p.textContent = msg;
+    const input = document.createElement("input");
+    input.className = "field mb-2";
+    input.placeholder = placeholder || "";
+    const row = document.createElement("div");
+    row.className = "flex gap-2";
+    const ok = document.createElement("button");
+    ok.className = "btn-p flex-1";
+    ok.textContent = "متابعة";
+    const no = document.createElement("button");
+    no.className = "btn-s flex-1";
+    no.textContent = "إلغاء";
+    const done = (v) => { ov.remove(); resolve(v); };
+    ok.onclick = () => done(input.value.trim() || null);
+    no.onclick = () => done(null);
+    input.onkeydown = (e) => { if (e.key === "Enter") ok.click(); };
+    ov.onclick = (e) => { if (e.target === ov) done(null); };
+    row.append(ok, no);
+    card.append(h, p, input, row);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    input.focus();
+  });
 }
 async function api(path, opts) {
   opts = opts || {};
@@ -288,17 +333,71 @@ async function loadOrders() {
     });
   } catch (e) { /* صامت */ }
 }
+const BK_STATUS_AR = { confirmed: "مؤكد ✅", waiting: "انتظار ⏳", canceled: "ملغي" };
 async function loadBooking() {
   try {
     const j = await api("/admin/appointments?tenant=" + encodeURIComponent(cur.tenant));
-    const box = $("cBooking");
-    box.innerHTML = "";
-    if (!j.appointments.length) { box.innerHTML = "<p class='text-slate-400'>لا حجوزات</p>"; return; }
+    const tb = $("cBookingBody");
+    tb.innerHTML = "";
+    if (!j.appointments.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      td.className = "border p-3 text-center text-slate-400";
+      td.textContent = "لا حجوزات";
+      tr.appendChild(td);
+      tb.appendChild(tr);
+      return;
+    }
     j.appointments.forEach((b) => {
-      const d = document.createElement("div");
-      d.className = "border rounded p-2 text-sm fade";
-      d.textContent = (b.service || "موعد") + " — " + (b.phone || "") + " — " + (b.slot || "") + " — " + (b.status || "");
-      box.appendChild(d);
+      const tr = document.createElement("tr");
+      tr.className = "hover:bg-slate-50";
+      [b.id, b.name || b.phone || "", b.phone || "", b.service || "",
+       ((b.day || "") + " " + (b.slot || "")).trim(),
+       BK_STATUS_AR[b.status] || b.status || ""].forEach((v) => {
+        const td = document.createElement("td");
+        td.className = "border p-2 text-xs";
+        td.textContent = v;
+        tr.appendChild(td);
+      });
+      const act = document.createElement("td");
+      act.className = "border p-2 text-xs whitespace-nowrap";
+      if (b.status === "confirmed") {
+        const mk = (label, cls, fn) => {
+          const btn = document.createElement("button");
+          btn.className = cls;
+          btn.textContent = label;
+          btn.onclick = fn;
+          act.appendChild(btn);
+          act.appendChild(document.createTextNode(" "));
+        };
+        mk("⏰ تذكير", "text-violet-600 font-bold", async () => {
+          try {
+            await api("/admin/appointments/" + encodeURIComponent(b.id) + "/remind", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+            toast("تم إرسال التذكير ✅", "success");
+          } catch (e) { toast("فشل التذكير", "error"); }
+        });
+        mk("🔁 نقل", "text-blue-600 font-bold", async () => {
+          const day = await promptDialog("نقل الحجز", "اليوم الجديد (مثال: الغد):", "اليوم");
+          if (!day) return;
+          const slot = await promptDialog("نقل الحجز", "الوقت الجديد (مثال: 14:00):", "14:00");
+          if (!slot) return;
+          try {
+            await api("/admin/appointments/" + encodeURIComponent(b.id) + "/reschedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant, day, slot }) });
+            toast("تم نقل الحجز ✅", "success");
+            loadBooking();
+          } catch (e) { toast("تعذر النقل", "error"); }
+        });
+        mk("إلغاء", "text-red-500", async () => {
+          try {
+            await api("/admin/appointments/" + encodeURIComponent(b.id) + "/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId: cur.tenant }) });
+            toast("تم إلغاء الحجز", "info");
+            loadBooking();
+          } catch (e) { toast("فشل الإلغاء", "error"); }
+        });
+      }
+      tr.appendChild(act);
+      tb.appendChild(tr);
     });
   } catch (e) { /* صامت */ }
 }
