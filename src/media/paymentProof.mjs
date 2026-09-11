@@ -122,6 +122,7 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
   const { pushHistory } = await import("../memory/conversations.mjs");
   const { logEvent } = await import("../../crm.mjs");
 
+  if (!tenant) return { outcome: "no-tenant" }; // تحصين: لا نعالج إيصالاً بلا مستأجر
   const order = await latestPendingOrder(tenant.id, phone);
   if (!order) return { outcome: "no-order" };
 

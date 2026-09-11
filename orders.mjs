@@ -190,14 +190,14 @@ export function detectTotal(tenant, userText, replyText) {
   // 2) أرقام مصحوبة بعملة
   const m = all.match(/(?:(?:\$|د\.أ|دينار|JD)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:د\.أ|دينار|JD))/g);
   if (!m || !m.length) {
-    const prices = (tenant.products || []).map((p) => Number(p.price));
-    return Math.max(...prices, 0) + Number(tenant.deliveryFee || 0);
+    const prices = ((tenant?.products) || []).map((p) => Number(p.price));
+    return Math.max(...prices, 0) + Number(tenant?.deliveryFee || 0);
   }
   const nums = m.map((s) => parseFloat(s.replace(/[^\d.]/g, ""))).filter((n) => !Number.isNaN(n) && n > 0);
-  const fee = Number(tenant.deliveryFee || 0);
-  const prices = (tenant.products || []).map((p) => Number(p.price));
+  const fee = Number(tenant?.deliveryFee || 0);
+  const prices = ((tenant?.products) || []).map((p) => Number(p.price));
   const totals = prices.map((p) => p + fee);               // سعر منتج واحد + توصيل
-  const bundle = tenant.bundleOffer?.enabled ? Number(tenant.bundleOffer.price) : null;
+  const bundle = tenant?.bundleOffer?.enabled ? Number(tenant.bundleOffer.price) : null;
   // 3) مبلغ يطابق إجمالياً معروفاً (منتج + توصيل) — الأكثر دقة
   for (const t of totals) if (nums.some((n) => Math.abs(n - t) < 0.001)) return t;
   // 4) باندل (شامل — بلا إضافة توصيل)
@@ -210,7 +210,7 @@ export function detectTotal(tenant, userText, replyText) {
 export function detectItem(tenant, userText, replyText) {
   const all = `${userText} ${replyText}`;
   // باندل: إذا ذُكر أكثر من صنف نعيدهم معاً بدل الصنف الأول فقط
-  const matched = (tenant.products || []).filter((p) => p.name && all.includes(p.name.split(" ")[0]));
+  const matched = ((tenant?.products) || []).filter((p) => p.name && all.includes(p.name.split(" ")[0]));
   if (matched.length >= 2) return matched.map((p) => p.name).join(" + ");
-  return matched[0]?.name || (tenant.products || []).map((p) => p.name).join(" + ") || "طلب";
+  return matched[0]?.name || ((tenant?.products) || []).map((p) => p.name).join(" + ") || "طلب";
 }

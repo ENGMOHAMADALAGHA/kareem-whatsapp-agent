@@ -68,6 +68,7 @@ function bookingDay(day) {
 
 // إنشاء طلب + تعليمات الدفع (يُستخدم للشراء النصي وضغط أزرار المنتجات)
 async function createOrderWithPayment(tenant, from, name, text, result) {
+  if (!tenant) return; // تحصين: لا ننشئ طلباً بلا مستأجر
   let total = detectTotal(tenant, text, result.reply);
   const { findRecentPending } = await import("../../../orders.mjs");
   const item = detectItem(tenant, text, result.reply);
@@ -172,9 +173,12 @@ async function processWebhookBody(body) {
           console.log(`  ⏸️ tenant موقوف/منتهي: ${tenant.id} - تم تجاهل الرسالة`);
           continue;
         }
-        // رقم بوت غير مسجل → لا نعالج الرسالة كبوت افتراضي (منع خلط المستأجرين)
-        if (!tenant && phoneNumberId) {
-          console.log(`  ⛔ دفعة من رقم بوت غير مسجل (${phoneNumberId}) — تجاهل كامل`);
+        // عزل تام (الدفاع الأعمق): أي دفعة بلا رقم بوت مسجل نتجاهلها كاملةً —
+        // (أ) رقم غير مسجل → null من resolveTenant (ب) رقم غائب → لا يشترط كريم الافتراضي.
+        // بدون هذا، رسائل غريبة بلا phone_number_id كانت تسلك لكريم (تسريب مستأجرين).
+        if (!tenant || !phoneNumberId) {
+          const why = !phoneNumberId ? "phone_number_id غائب في الدفعة" : `رقم بوت غير مسجل (${phoneNumberId})`;
+          console.log(`  ⛔ دفعة بلا tenant مسجل — ${why} — تجاهل كامل`);
           continue;
         }
 
