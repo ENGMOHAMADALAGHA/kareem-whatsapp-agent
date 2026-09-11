@@ -70,28 +70,41 @@ function bookingDay(day) {
 }
 
 // إنشاء طلب + تعليمات الدفع (يُستخدم للشراء النصي وضغط أزرار المنتجات)
+// القاعدة: إعادة الاستخدام فقط عند تطابق السلعة والمبلغ معاً —
+// أي محور لسلعة/مبلغ مختلف (أو طلب قديم بمبلغ ملوث من كلام تسويقي) يُلغى ويُستبدل.
 async function createOrderWithPayment(tenant, from, name, text, result) {
   if (!tenant) return; // تحصين: لا ننشئ طلباً بلا مستأجر
-  let total = detectTotal(tenant, text, result.reply);
-  const { findRecentPending } = await import("../../../orders.mjs");
+  const { findRecentPending, cancelOpenOrders } = await import("../../../orders.mjs");
   const item = detectItem(tenant, text, result.reply);
+  const freshTotal = totalForItem(tenant, item, text);
   let order = await findRecentPending(tenant.id, from, 30);
   let isNew = false;
-  // سلعة مختلفة عن الطلب المعلق → طلب جديد بمبلغه الصحيح (لا إعادة استخدام خاطئة)
-  if (order && item && order.items?.[0]?.name && order.items[0].name !== item) {
-    order = null;
+  const userItem = detectUserItem(tenant, text);
+  const userTotal = detectUserTotal(text);
+  if (order) {
+    const orderItem = order.items?.[0]?.name || "";
+    const sameItem = !userItem || orderItem === userItem ||
+      (userItem.includes(" + ") && orderItem && userItem.includes(orderItem.split(" ")[0]));
+    const sameTotal = userTotal === null || Math.abs(Number(order.total) - userTotal) < 0.001;
+    if (!sameItem || !sameTotal) {
+      // محور الزبون (أو طلب قديم بمبلغ ملوث) → إلغاء الكل وبدء نظيف
+      const killed = await cancelOpenOrders(tenant.id, from).catch(() => 0);
+      logEvent("order_superseded", { tenantId: tenant.id, phone: from, oldOrderId: order.id, killed }).catch(() => {});
+      console.log(`  🔄 محور لسلعة/مبلغ مختلف — أُلغي ${killed} قديم، طلب جديد`);
+      order = null;
+    }
   }
   if (!order) {
     order = await createOrder({
       tenantId: tenant.id, phone: from, name,
       items: [{ name: item, qty: 1 }],
-      total, currency: tenantCurrency(tenant),
+      total: freshTotal, currency: tenantCurrency(tenant),
     });
     isNew = true;
   } else {
-    total = order.total; // التزم بإجمالي الطلب الأصلي (نفس السلعة)
-    console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه (نفس السلعة)`);
+    console.log(`  ♻️ طلب موجود ${order.id} — إعادة استخدامه (نفس السلعة والمبلغ)`);
   }
+  const total = order.total;
   const cur = fmtMoney(total, order.currency);
   // دفع بالمحافظ/CliQ حصراً — لا روابط دفع أبداً: تحويل + لقطة شاشة + تحقق
   const wallets = tenant.features?.paymentWallets || [];
@@ -372,6 +385,27 @@ async function processWebhookBody(body) {
           if (await isTakeover(tenant?.id, from)) {
             await pushHistory(from, "user", text, tenant);
             console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);
+            console.log(`${"─".repeat(60)}\n`);
+            continue;
+          }
+
+          // —— نية إلغاء/نسيان الطلب: "انسى الطلب القديم / الغيه / كنسل / بلا / لا بدي طلب جديد" ——
+          // تُلغى كل الطلبات المفتوحة فوراً ولا يُنشأ طلب بهذه الدورة (الذكاء يرد محادثة نظيفة)
+          if (/(انسى|انس|أنسى|الغي|ألغي|الغاء|إلغاء|الغى|كنسل|كنسله|بلا.*طلب|ما بدي.*طلب|لا.*طلب جديد|امسح.*طلب|من غير طلب)/.test(text)) {
+            const { cancelOpenOrders } = await import("../../../orders.mjs");
+            const killed = await cancelOpenOrders(tenant?.id, from).catch(() => 0);
+            const reply = killed > 0
+              ? `تمام يا غالي ✅ نسيت الطلبات المعلقة (${killed}). ابعت طلبك الجديد وأنا جاهز 👟`
+              : `ما عندك طلبات معلقة يا غالي 😊 ابعت طلبك الجديد وأنا جاهز 👟`;
+            await pushHistory(from, "user", text, tenant);
+            await pushHistory(from, "assistant", reply, tenant);
+            logEvent("orders_forgotten", { tenantId: tenant?.id, phone: from, killed }).catch(() => {});
+            try {
+              await sendWhatsAppMessage(from, reply, tenant);
+            } catch (e) {
+              console.error(`  ❌ فشل الإرسال: ${e.message}`);
+            }
+            console.log(`  🧹 نسيان طلبات ${from} (أُلغي ${killed})`);
             console.log(`${"─".repeat(60)}\n`);
             continue;
           }
