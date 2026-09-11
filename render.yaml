@@ -1,0 +1,19 @@
+# Render Blueprint — Wasl Command Center
+# رابط الاستيراد أو النسخ في Render Dashboard (ذو صلة عند إعادة البناء من صفر؛
+# النشر الحالي مرتبط بالكود عبر Auto-Deploy من GitHub مباشرة).
+services:
+  - type: web
+    name: kareem-whatsapp-agent
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.mjs
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # عبّئ بقية المتغيرات في Dashboard → Environment:
+      # DATABASE_URL, GOOGLE_API_KEY, AI_MODEL, PORT, WEBHOOK_VERIFY_TOKEN,
+      # WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, TOKEN_ENC_KEY, META_APP_SECRET,
+      # ADMIN_USER, ADMIN_PASS, JWT_SECRET, WA_FOLLOWUP_TEMPLATE

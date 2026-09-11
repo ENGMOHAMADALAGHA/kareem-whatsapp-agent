@@ -349,7 +349,8 @@ curl https://kareem-whatsapp-agent.onrender.com/
 - [ ] Tap (ملغى حالياً — لا بوابات إلكترونية بقرار D2)
 - [ ] `STRIPE_SECRET_KEY` (ملغى نهائياً بقرار D2 — لا يُنفذ أبداً)
 - [ ] اختبار حمل + Render Pro/RDP + تسعير Sub-contract
-- [ ] أوامر الطاقم `قف/شغّل` (مؤجلة — `REMINDERS.md`)
+- [x] أوامر الطاقم واتساب `قف/شغّل` (takeover) من رقم الموظف المسجل
+- [x] ترويسات أمنية (nosniff/HSTS/X-Frame) + حد جسم 1MB + `engines`/render.yaml/healthz
 - [ ] Embedded Signup + توثيق مزوّد (المرحلة 3)
 
 ---

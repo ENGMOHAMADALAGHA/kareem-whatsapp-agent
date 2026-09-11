@@ -1,5 +1,5 @@
 import { resolveTenant, getTenantFull, listTenants, addTenant } from "../../../tenants.mjs";
-import { WHATSAPP_TOKEN, WEBHOOK_VERIFY_TOKEN } from "../../config/env.mjs";
+import { WHATSAPP_TOKEN, WEBHOOK_VERIFY_TOKEN, STAFF_PHONE } from "../../config/env.mjs";
 import {
   bookAppointment,
   listAppointments,
@@ -344,6 +344,31 @@ async function processWebhookBody(body) {
           console.log(`  🏢 tenant=${tenant?.id} | بوت=${tenant?.botName}`);
           console.log(`  📥 رسالة واتساب من ${name} (${from}): "${text}"${buttonId ? ` [btn=${buttonId}]` : ""}`);
           console.log(`  🧠 الذاكرة: ${(await getHistory(from, tenant)).length} رسائل سابقة`);
+
+          // —— أوامر الطاقم: "قف" يُسكت البوت على هذه المحادثة (takeover)، "شغّل" يرجعّه — رقم الموظف المسجل فقط ——
+          // السلوك قبل هذه الكتلة: لو كان takeover نشطاً نتجاهل الرسالة — لذلك تُعترض هنا قبل فحصه
+          // حتى يتمكن الموظف المُسكَت نفسه من إعادة تفعيل البوت بكلمة "شغّل".
+          const staffNum = tenant?.features?.staffPhone || STAFF_PHONE;
+          const cmdText = text.trim().replace(/^(البوت\s*|يا\s*بوت\s*)/, "");
+          if ((cmdText === "قف" || cmdText === "شغّل") && staffNum && normalizePhone(staffNum) === from) {
+            const on = cmdText === "قف";
+            await setTakeover(tenant?.id, from, on, `staff:${from}`);
+            const reply = on
+              ? "تم ✅ سكّت البوت على هالمحادثة — بيرد الموظف من الموقع مباشرة. لإرجاعه ابعت \"شغّل\"."
+              : "تمام ✅ البوت رجع يرد على هالمحادثة.";
+            await pushHistory(from, "user", text, tenant);
+            await pushHistory(from, "assistant", reply, tenant);
+            logEvent(on ? "staff_pause" : "staff_resume", { tenantId: tenant?.id, phone: from }).catch(() => {});
+            try {
+              await sendWhatsAppMessage(from, reply, tenant);
+            } catch (e) {
+              console.error(`  ❌ فشل إرسال تأكيد أمر الطاقم: ${e.message}`);
+            }
+            console.log(`  🎛️  أمر طاقم ${cmdText} من ${from} (${tenant?.id})`);
+            console.log(`${"─".repeat(60)}\n`);
+            continue;
+          }
+
           if (await isTakeover(tenant?.id, from)) {
             await pushHistory(from, "user", text, tenant);
             console.log(`  ⏸️ takeover نشط (${from}) - حُفظت الرسالة بدون رد آلي`);

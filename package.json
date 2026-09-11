@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Wasl Command Center — منصة واتساب متعددة البوتات (بوت كريم التجريبي مدمج)",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "electron/main.cjs",
   "scripts": {
     "start": "node server.mjs",

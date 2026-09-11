@@ -24,8 +24,24 @@ import { startSchedulers } from "../jobs/schedulers.mjs";
 export function createApp() {
   const app = express();
 
+  // ترويسات أمنية عامة بدل الاعتماد على خوادم خارجية
+  // (CSP متعمد: بلا ترويض لأن الكونسول يعتمد Tailwind/Script مضمّن — التعقيد وقابلية الكسر أكبر من منفعته)
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    // لوحات الإدارة لا تُؤطَّر أبداً؛ معاينات البوابة (iframe same-origin) تبقى مسموحة بـ SAMEORIGIN
+    res.setHeader("X-Frame-Options", req.path.startsWith("/admin") ? "DENY" : "SAMEORIGIN");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (process.env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+  });
+
   // ضروري لقراءة JSON من واتساب + حفظ الخام للتحقق من التوقيع
+  // حد 1MB: الحمولات نصية صغيرة، والصوت/الصور تُسحب كروابط لا base64
   app.use(express.json({
+    limit: "1mb",
     verify: (req, res, buf) => {
       req.rawBody = buf;
     },
@@ -83,7 +99,10 @@ export function createApp() {
   app.use((err, req, res, next) => {
     console.error(`  ❌ خطأ غير معالج [${req.method} ${req.path}]: ${err.message}`);
     if (res.headersSent) return next(err);
-    res.status(500).json({ ok: false, error: "خطأ داخلي" });
+    // payload أكبر من حد 1MB → 413 واضح بدل 500 عمياء
+    const status = err.type === "entity.too.large" ? 413 : (err.status || err.statusCode || 500);
+    const body = status === 413 ? "الطلب أكبر من المسموح" : status === 404 ? "غير موجود" : "خطأ داخلي";
+    res.status(status).json({ ok: false, error: body });
   });
 
   return app;
