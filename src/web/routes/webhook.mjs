@@ -240,7 +240,12 @@ async function processWebhookBody(body) {
             const mimeType = msg.document?.mime_type || "image/jpeg";
             const { handleReceiptImage } = await import("../../media/paymentProof.mjs");
             const res = await handleReceiptImage({ tenant, phone: from, mediaId, mimeType });
-            if (res.outcome === "no-order") {
+            if (res.outcome === "no-tenant") {
+              // دفاع بالعمق: البوابة العليا تمنع الوصول أصلاً — هذا الفرع للوضوح فقط
+              console.log(`  ⛔ إيصال بلا مستأجر (media=${mediaId}) — تجاهل صريح`);
+              console.log(`${"─".repeat(60)}\n`);
+              continue;
+            } else if (res.outcome === "no-order") {
               const reply = `وصلتني الصورة يا غالي 📸 بس ما لقيت طلب معلق برقمك. إذا بدك تطلب ابعت "بدي اطلب"، وإذا هاي لقطة تحويل ابعت رقم الطلب معها.`;
               try {
                 await sendWhatsAppMessage(from, reply, tenant);
