@@ -1,6 +1,7 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 import crypto from "node:crypto";
 import { normalizePhone } from "./src/utils/phone.mjs";
+import { ammanDateStr } from "./src/utils/time.mjs";
 
 const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
@@ -152,7 +153,7 @@ function rowToBooking(r) {
 // "العمود when" الحقيقي: day يُخزّن ISO فعلي منذ إصلاح bookingDay. عند مطابقة غداً فقط
 // نتأكد أننا نذكّر قبل الموعد وليس 60 دقيقة بعد الحجز.
 export function isoDay(offsetDays = 0) {
-  return new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return ammanDateStr(offsetDays);
 }
 
 export async function dueReminders({ afterMinutes = 60 } = {}) {
@@ -175,8 +176,20 @@ export async function dueReminders({ afterMinutes = 60 } = {}) {
 }
 
 export async function markReminded(id, tenantId) {
-  await tenantDb(tenantId).appointment.update({
-    where: { id }, data: { remindedAt: new Date() },
+  // ادّعاء ذري قبل الإرسال: updateMany بشرط remindedAt=null —
+  // نسخة أخرى/مؤقت منافس لا يستطيع تكرار نفس التذكير (لا رسائل مكررة).
+  const r = await tenantDb(tenantId).appointment.updateMany({
+    where: { id, remindedAt: null },
+    data: { remindedAt: new Date() },
+  }).catch(() => ({ count: 0 }));
+  return r?.count > 0;
+}
+
+// إلغاء الادعاء عند فشل الإرسال (للإعادة في الدورة التالية) — لا نضيّع التذكير بفشل عابر
+export async function unmarkReminded(id, tenantId) {
+  await tenantDb(tenantId).appointment.updateMany({
+    where: { id },
+    data: { remindedAt: null },
   }).catch(() => null);
 }
 

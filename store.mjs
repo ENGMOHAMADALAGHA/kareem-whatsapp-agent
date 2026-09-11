@@ -44,6 +44,20 @@ export async function storeSet(key, value, ttlMs = null) {
   }
 }
 
+export async function storeKeys(prefix) {
+  try {
+    const rows = await db().kvStore.findMany({
+      where: { key: { startsWith: prefix } },
+      select: { key: true },
+      take: 500,
+    });
+    return rows.map((r) => r.key);
+  } catch (e) {
+    console.error(`  ⚠️ فشل مسح store بالبادئة: ${e.message}`);
+    return [];
+  }
+}
+
 export async function storeDel(key) {
   cache.delete(key);
   try {

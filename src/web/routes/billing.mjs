@@ -1,6 +1,6 @@
 import { getPublicOrder, markOrderPaid, fmtMoney } from "../../../orders.mjs";
 import { getTenantFull } from "../../../tenants.mjs";
-import { sendWhatsAppMessage } from "../../whatsapp/sender.mjs";
+import { sendWithWindowFallback } from "../../whatsapp/sender.mjs";
 import { pushHistory } from "../../memory/conversations.mjs";
 import { requestCsat } from "../../../engage.mjs";
 import { logEvent } from "../../../crm.mjs";
@@ -42,7 +42,8 @@ export async function finalizePaidOrder(orderId, source = "manual", opts = {}) {
     const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
     await requestCsat(order.tenantId, order.phone, order.id);
     try {
-      await sendWhatsAppMessage(order.phone, msg, tenant);
+      // داخل النافذة ترسل حرة؛ إن كانت مغلقة تُعاد عبر القالب المعتمد (متابعة لاحقة)
+      await sendWithWindowFallback(order.phone, msg, tenant);
       await pushHistory(order.phone, "assistant", msg, tenant);
     } catch (e) {
       console.error(`  ❌ فشل إرسال CSAT: ${e.message}`);

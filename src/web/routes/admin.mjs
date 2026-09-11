@@ -351,7 +351,7 @@ export function registerAdminRoutes(app) {
     const tenant = await getTenantFull(tenantId);
     const { pushHistory } = await import("../../memory/conversations.mjs");
     logEvent("proof_rejected", { tenantId, phone: order.phone, orderId: order.id, reason }).catch(() => {});
-    const msg = `عذراً يا بطل 🙏 في مشكلة باعتماد إيصال طلبك ${order.id}: ${reason}.\nلو سمحت راجعها وحاول مرة تانية، أو ابعت "أريد موظف" ونساعدك مباشرة.`;
+    const msg = `عذراً يا بطل 🙏 في مشكلة باعتماد إيصال طلبك ${order.id}: ${reason}.\nأرسل اللقطة من جديد هون 📸 لإعادة المحاولة، أو ابعت "أريد موظف" ونساعدك مباشرة.`;
     if (tenant) {
       await sendWithWindowFallback(order.phone, msg, tenant).catch(() => {});
       await pushHistory(order.phone, "assistant", msg, tenant);
@@ -487,10 +487,16 @@ export function registerAdminRoutes(app) {
       const first = list[0];
       const tenant = await getTenantFull(first.tenantId);
       if (!tenant) continue;
-      const lines = list.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
-      const msg = list.length === 1
-        ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} (${fmtMoney(first.total, first.currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
-        : `يا هلا يا بطل! 👋 عندك ${list.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
+      // ادّعاء ذري لكل الطلبات قبل الإرسال — لا تكرار مع المؤقت
+      const claimed = [];
+      for (const o of list) {
+        if (await markCartReminded(o.id, o.tenantId)) claimed.push(o);
+      }
+      if (!claimed.length) continue;
+      const lines = claimed.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
+      const msg = claimed.length === 1
+        ? `يا هلا يا بطل! 👋 شفنا طلبك ${claimed[0].id} (${fmtMoney(claimed[0].total, claimed[0].currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
+        : `يا هلا يا بطل! 👋 عندك ${claimed.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
       try {
         const r = await sendWithWindowFallback(first.phone, msg, tenant);
         if (!r.ok) {
@@ -498,12 +504,11 @@ export function registerAdminRoutes(app) {
         } else {
           await pushHistory(first.phone, "assistant", msg, tenant);
         }
-        for (const o of list) {
-          await markCartReminded(o.id, o.tenantId);
-        }
-        logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: list.map((o) => o.id), skipped: r.ok ? undefined : r.reason }).catch(() => {});
-        sent.push(...list.map((o) => o.id));
+        logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: claimed.map((o) => o.id), skipped: r.ok ? undefined : r.reason }).catch(() => {});
+        sent.push(...claimed.map((o) => o.id));
       } catch (e) {
+        const { unmarkCartReminded } = await import("../../../orders.mjs");
+        for (const o of claimed) await unmarkCartReminded(o.id, o.tenantId);
         console.error(`  ❌ فشل تذكير السلة لـ ${first.phone}: ${e.message}`);
       }
     }
@@ -590,6 +595,10 @@ load();
       const tenant = await getTenantFull(b.tenantId);
       if (!tenant) continue;
       const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
+      // ادّعاء ذري قبل الإرسال — لا تكرار مع المؤقت أو مع نسخة أخرى
+      const claimed = await markReminded(b.id, b.tenantId);
+      if (!claimed) continue;
+      sent.push(b.id);
       try {
         const r = await sendWithWindowFallback(b.phone, msg, tenant);
         if (!r.ok) {
@@ -597,9 +606,9 @@ load();
         } else {
           await pushHistory(b.phone, "assistant", msg, tenant);
         }
-        await markReminded(b.id, b.tenantId);
-        sent.push(b.id);
       } catch (e) {
+        const { unmarkReminded } = await import("../../../bookings.mjs");
+        await unmarkReminded(b.id, b.tenantId); // فشل عابر → يُعاد في دورة لاحقة
         console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
       }
     }

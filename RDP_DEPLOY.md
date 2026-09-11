@@ -32,10 +32,13 @@ npm install
 ### 2ج) تجربة
 ```powershell
 node --check *.mjs
-npm test       # لازم 8 اختبارات ناجحة
+npm test       # اختبارات الوحدات (node:test): تشفير/توقيت/طلبات/طابور/CSRF
+npm run test:ai  # اختياري: دخان AI (يستهلك API) — 8 سيناريوهات
 pm2 start server.mjs --name kareem
 pm2 startup
 pm2 save
+# فحص البقاء:
+curl http://localhost:3000/healthz   # → {"ok":true,...}
 ```
 
 ## 3. ملف .env على الـ RDP
@@ -44,9 +47,10 @@ AI_PROVIDER=google
 GOOGLE_API_KEY=AIza... (مفتاحك)
 AI_MODEL=gemini-flash-lite-latest
 PORT=3000
-WEBHOOK_VERIFY_TOKEN=my_secret_token
+WEBHOOK_VERIFY_TOKEN=<توكين قوي عشوائي — الافتراضي my_secret_token مرفوض إنتاجياً>
 WHATSAPP_TOKEN=EAA... (من Meta)
 WHATSAPP_PHONE_ID=1300758353117196
+TOKEN_ENC_KEY=<نص عشوائي عريض 32+ حرف>   # إجباري: يحفظ توكن كل بوت من /admin مشفّراً (AES-256-GCM) — بدونه يُرفض الحفظ
 # لبوتات إضافية لاحقاً: WHATSAPP_TOKEN_<TENANT> أو عبر /admin/tenants
 ```
 

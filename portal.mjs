@@ -94,7 +94,8 @@ export async function startPasswordReset(tenantId, phone, sendFn) {
     where: { tenantId_phone: { tenantId, phone } },
   });
   if (!u) return { ok: false }; // لا نكشف وجود الحساب
-  const code = String(Math.floor(100000 + Math.random() * 900000));
+  // كود 6 أرقام من CSPRNG (لا Math.random — قابل للتنبؤ ببيئة مشتركة)
+  const code = String(crypto.randomInt(100000, 1000000));
   const codeHash = await bcrypt.hash(code, 8);
   await tenantDb(tenantId).tenantUser.update({
     where: { id: u.id },

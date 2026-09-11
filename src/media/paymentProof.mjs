@@ -116,14 +116,29 @@ export function verifyReceiptAgainstOrder(extracted, order, tenant) {
 // ── 3) المنسّق الكامل: صورة واتساب → (تأكيد تلقائي | مراجعة يدوية) ──
 export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "image/jpeg" }) {
   const { downloadWhatsAppMedia } = await import("../../voice.mjs");
-  const { latestPendingOrder, markOrderReview } = await import("../../orders.mjs");
+  const { latestPendingOrder, latestRejectedOrder, reopenRejectedOrder, markOrderReview } = await import("../../orders.mjs");
   const { finalizePaidOrder } = await import("../web/routes/billing.mjs");
   const { sendWhatsAppMessage } = await import("../whatsapp/sender.mjs");
   const { pushHistory } = await import("../memory/conversations.mjs");
   const { logEvent } = await import("../../crm.mjs");
 
   if (!tenant) return { outcome: "no-tenant" }; // تحصين: لا نعالج إيصالاً بلا مستأجر
-  const order = await latestPendingOrder(tenant.id, phone);
+  let order = await latestPendingOrder(tenant.id, phone);
+  let reopened = false;
+  if (!order) {
+    // إعادة المحاولة: طلب مرفوض خلال 48 ساعة يُعاد فتحه تلقائياً عند وصول لقطة جديدة —
+    // عميل دفع فعلياً ولا يمكن أن يُترك خارج الحلقة بعد رفض إداري.
+    const rejected = await latestRejectedOrder(tenant.id, phone);
+    if (rejected) {
+      const re = await reopenRejectedOrder(rejected.id, tenant.id);
+      if (re) {
+        order = re;
+        reopened = true;
+        console.log(`  ♻️ طلب مرفوض ${order.id} أُعيد فتحه لإعادة المحاولة (${phone})`);
+        await logEventSafe(logEvent, "order_reopened", { tenantId: tenant.id, phone, orderId: order.id });
+      }
+    }
+  }
   if (!order) return { outcome: "no-order" };
 
   const token = tenant?.whatsapp_token || process.env.WHATSAPP_TOKEN;
@@ -144,9 +159,28 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
   }
 
   const { match, reasons } = verifyReceiptAgainstOrder(extracted, order, tenant);
+  // حماية إعادة الاستخدام: نفس رقم المرجع المرجعي لا يُسدد طلباً ثانياً تلقائياً —
+  // لقطة واحدة (أو صورة متطابقة) تُدفع مرة واحدة فقط مهما تعددت الطلبات المعلقة.
+  if (match && extracted.referenceNumber) {
+    const { tenantDb } = await import("../../security/tenantGuard.mjs");
+    const dup = await tenantDb(tenant.id).order.findFirst({
+      where: {
+        phone,
+        status: "paid",
+        id: { not: order.id },
+        proof: { path: ["receipt", "referenceNumber"], equals: extracted.referenceNumber },
+        paidAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+    }).catch(() => null);
+    if (dup) {
+      reasons.push(`reference-already-paid (${dup.id})`);
+      console.log(`  ⚠️ مرجع ${extracted.referenceNumber} سبق دفعه للطلب ${dup.id} — طلب ${order.id} للمراجعة اليدوية`);
+    }
+  }
   const proof = { mediaId, at: new Date().toISOString(), auto: true, receipt: extracted, reasons };
+  const isMatch = match && reasons.length === 0;
 
-  if (match) {
+  if (isMatch) {
     await finalizePaidOrder(order.id, "receipt-ai");
     const paidLabel = extracted.currency
       ? `${extracted.amountPaid} ${extracted.currency}`
@@ -154,6 +188,7 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
     const msg =
       `تم التحقق من إيصالك تلقائياً ✅\n` +
       `🧾 الطلب ${order.id} — المبلغ المستلم ${paidLabel} (مرجع: ${extracted.referenceNumber || "—"}).\n` +
+      (reopened ? `وعدنا فتح الطلب من جديد بعد الرفض السابق 🙌\n` : ``) +
       `طلبك تأكد وبتجهز هلا للتوصيل. شكراً لثقتك! 🙏`;
     try {
       await sendWhatsAppMessage(phone, msg, tenant);

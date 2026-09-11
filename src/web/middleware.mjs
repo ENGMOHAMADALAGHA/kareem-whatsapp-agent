@@ -82,3 +82,30 @@ export function scopeClient(req, res, next) {
   }
   next();
 }
+
+// ── حماية CSRF لطلبات تغيير الحالة (POST/PUT/PATCH/DELETE) ──
+// خط الدفاع الثاني بعد الـ Authorization header:
+// المتصفح يرافق أي طلب بـ Sec-Fetch-Site و/أو Origin — خضورهما من أصل آخر = رفض فوري.
+// Meta Graph (webhook) لا يرسل أي منهما — يمر بحرية (server-to-server).
+export function csrfGuard(req, res, next) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  const sfs = req.headers["sec-fetch-site"];
+  if (sfs === "cross-site") {
+    console.warn(`  🛡️ CSRF مرفوض: ${req.method} ${req.path} (sec-fetch-site=cross-site)`);
+    return res.status(403).json({ ok: false, error: "طلبات من أصل آخر مرفوضة" });
+  }
+  const origin = req.headers.origin;
+  if (origin) {
+    const host = req.headers.host;
+    let same = false;
+    try {
+      const u = new URL(origin);
+      same = !!host && u.host === host;
+    } catch { same = false; }
+    if (!same) {
+      console.warn(`  🛡️ CSRF Origin مرفوض: ${origin} ضد host ${host}`);
+      return res.status(403).json({ ok: false, error: "اصل الطلب غير متطابق" });
+    }
+  }
+  next();
+}

@@ -3,7 +3,7 @@
 // لا تعرف شيئاً عن AI أو المنطق — تستقبل tenant جاهزاً.
 // ──────────────────────────────────────────────
 import { resolveTenantInput } from "../../tenants.mjs";
-import { WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, OUTBOUND_TIMEOUT_MS, WA_TEMPLATE_LANG } from "../config/env.mjs";
+import { WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, OUTBOUND_TIMEOUT_MS, WA_TEMPLATE_LANG, WA_FOLLOWUP_TEMPLATE } from "../config/env.mjs";
 import { checkLimit, tenantSendKey } from "../security/rateLimit.mjs";
 import { sendWithRetry } from "./outbound.mjs";
 import { normalizePhone } from "../utils/phone.mjs";
@@ -160,6 +160,24 @@ export async function sendTemplate(to, templateName, params = [], tenantInput = 
         : [],
     },
   }, tenantInput);
+}
+
+// إرسال نص مع تجاوز نافذة 24h: جرّب الرسالة الحرة أولاً (تفضيل Meta)،
+// وعند WINDOW_CLOSED (code 131047) أعد الإرسال عبر قالب معتمد إن وُجد
+// (WA_FOLLOWUP_TEMPLATE أو template عبر opts) — ألا وفشل الاتصال يُرمى الخطأ.
+export async function sendWithWindowFallback(to, text, tenantInput = null, opts = {}) {
+  try {
+    return await sendWhatsAppMessage(to, text, tenantInput);
+  } catch (err) {
+    if (err?.code !== "WINDOW_CLOSED") throw err;
+    const template = opts.template || WA_FOLLOWUP_TEMPLATE;
+    if (!template) {
+      console.error(`  ⏳ نافذة 24h مغلقة بلا قالب بديل — لم تصل لـ ${to}: ${err.message}`);
+      throw err;
+    }
+    console.warn(`  📋 نافذة 24h مغلقة — إعادة عبر القالب "${template}" لـ ${to}`);
+    return await sendTemplate(to, template, [text], tenantInput);
+  }
 }
 
 // أزرار افتراضية لكل tenant من منتجاته

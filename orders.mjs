@@ -89,8 +89,18 @@ export async function dueCartRemindersAll({ afterMinutes = 60 } = {}) {
 }
 
 export async function markCartReminded(id, tenantId) {
-  await tenantDb(tenantId).order.update({
-    where: { id }, data: { cartRemindedAt: new Date() },
+  // ادّعاء ذري قبل الإرسال: يمنع تكرار رسالة السلة بين المؤقت والتشغيل اليدوي
+  const r = await tenantDb(tenantId).order.updateMany({
+    where: { id, cartRemindedAt: null },
+    data: { cartRemindedAt: new Date() },
+  }).catch(() => ({ count: 0 }));
+  return r?.count > 0;
+}
+
+export async function unmarkCartReminded(id, tenantId) {
+  await tenantDb(tenantId).order.updateMany({
+    where: { id },
+    data: { cartRemindedAt: null },
   }).catch(() => null);
 }
 
@@ -160,6 +170,29 @@ export async function rejectOrder(id, tenantId, { reason, by }) {
   return rowToOrder(row);
 }
 
+// طلب مرفوض مؤخراً (نافذة سماح لإعادة المحاولة بعد رفض الإيصال) — لا تهمل تجربة عميل دفع فعلياً
+export async function latestRejectedOrder(tenantId, phone, withinHours = 48) {
+  const rows = await tenantDb(tenantId).order.findMany({
+    where: { phone, status: "rejected", createdAt: { gte: new Date(Date.now() - withinHours * 60 * 60 * 1000) } },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+  });
+  return rowToOrder(rows[0]);
+}
+
+// إعادة فتح طلب مرفوض بعد وصول لقطة جديدة (ذري: updateMany بشرط rejected يمنع إعادة فتح مزدوجة)
+export async function reopenRejectedOrder(id, tenantId) {
+  const updated = await tenantDb(tenantId).order.updateMany({
+    where: { id, status: "rejected" },
+    data: { status: "pending" },
+  }).catch(() => ({ count: 0 }));
+  if (!updated || updated.count === 0) return null;
+  const row = await tenantDb(tenantId).order.findUnique({
+    where: { id },
+  }).catch(() => null);
+  return rowToOrder(row);
+}
+
 // ── العملة: دينار أردني افتراضياً (السوق الأردني) ──
 // الدولار يُفعّل لكل عميل عبر features.currency فقط عند الطلب.
 export const DEFAULT_CURRENCY = "JOD";
@@ -177,40 +210,63 @@ export function fmtMoney(amount, currency = DEFAULT_CURRENCY) {
 // التأكيد يتم فقط عبر تحقق الإيصال الآلي أو تأكيد الموظف اليدوي.
 
 // تقدير الإجمالي والصنف من نص المحادثة.
-// الأفضلية دائماً للمبلغ الصريح في جملة "الإجمالي"، ثم مبلغ يطابق (سعر منتج + توصيل)،
-// ثم الباندل، ثم سعر منتج منفرد (+توصيل) — يمنع التقاط أسعار عروض جانبية ويضمن إضافة التوصيل.
+// الحقيقة التجارية هي كتالوج الأسعار لا نص العميل غير الموثوق:
+// المبلغ الصريح يُقبل فقط إذا طابق قيمة كتالوج صحيحة (سلعة + توصيل / باندل) —
+// أي مبلغ صريح لا يطابق الكتالوج (مثل "الإجمالي 55" من سياق عرض جانبي لسلعة أخرى)
+// يُرفض ويُعتمد إجمالي السلعة المختارة بدلاً منه.
 export function detectTotal(tenant, userText, replyText) {
   const all = `${userText} ${replyText}`;
-  // 1) المبلغ الصريح في جملة الإجمالي/المجموع/total (مصدر الحقيقة عند الـ AI)
-  const mTotal = all.match(/(?:الإجمالي|المجموع|الاجمالي|الإجمالى|المجموع الكلي|total)[^0-9$]*(?:(?:\$|د\.أ|دينار|JD)\s*)?(\d+(?:\.\d+)?)/i);
-  if (mTotal) {
-    const v = parseFloat(mTotal[1]);
-    if (!Number.isNaN(v)) return v;
-  }
-  // 2) أرقام مصحوبة بعملة
-  const m = all.match(/(?:(?:\$|د\.أ|دينار|JD)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:د\.أ|دينار|JD))/g);
-  if (!m || !m.length) {
-    const prices = ((tenant?.products) || []).map((p) => Number(p.price));
-    return Math.max(...prices, 0) + Number(tenant?.deliveryFee || 0);
-  }
-  const nums = m.map((s) => parseFloat(s.replace(/[^\d.]/g, ""))).filter((n) => !Number.isNaN(n) && n > 0);
   const fee = Number(tenant?.deliveryFee || 0);
-  const prices = ((tenant?.products) || []).map((p) => Number(p.price));
-  const totals = prices.map((p) => p + fee);               // سعر منتج واحد + توصيل
+  const products = tenant?.products || [];
+  const prices = products.map((p) => Number(p.price));
+  const knownTotals = prices.map((p) => p + fee); // إجمالي سلعة + توصيل
   const bundle = tenant?.bundleOffer?.enabled ? Number(tenant.bundleOffer.price) : null;
-  // 3) مبلغ يطابق إجمالياً معروفاً (منتج + توصيل) — الأكثر دقة
-  for (const t of totals) if (nums.some((n) => Math.abs(n - t) < 0.001)) return t;
-  // 4) باندل (شامل — بلا إضافة توصيل)
-  if (bundle !== null && nums.some((n) => Math.abs(n - bundle) < 0.001)) return bundle;
-  // 5) سعر منتج منفرد → نضيف رسوم التوصيل
-  for (const p of prices) if (nums.some((n) => Math.abs(n - p) < 0.001)) return p + fee;
-  // 6) لا مطابقة
-  return Math.max(...prices, 0) + fee;
+  const maxKnown = Math.max(...prices, 0) + fee;
+
+  // السلعة المختارة من الكتالوج (تحديد دقيق بالاسم الكامل أولاً ثم الكلمة الأولى)
+  const item = detectItem(tenant, userText, replyText);
+  const picked = products.find((p) => p.name && item.includes(p.name));
+  const pickedTotal = picked ? Number(picked.price) + fee : null;
+
+  // المبالغ المرشّحة في النص (بصيغة عملة)
+  const nums = (all.match(/(?:(?:\$|د\.أ|دينار|JD)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:د\.أ|دينار|JD))/g) || [])
+    .map((s) => parseFloat(s.replace(/[^\d.]/g, "")))
+    .filter((n) => !Number.isNaN(n) && n > 0);
+
+  // مبلغ صريح في جملة "الإجمالي" — يُقبل فقط ضمن قيم الكتالوج
+  const mTotal = all.match(/(?:الإجمالي|المجموع|الاجمالي|الإجمالى|المجموع الكلي|total)[^0-9$]*(?:(?:\$|د\.أ|دينار|JD)\s*)?(\d+(?:\.\d+)?)/i);
+  const explicit = mTotal ? parseFloat(mTotal[1]) : null;
+  const inTotals = (v) => knownTotals.some((t) => Math.abs(v - t) < 0.001);
+  const inPrices = (v) => prices.some((p) => Math.abs(v - p) < 0.001);
+  const inAny = (v) => nums.some((n) => Math.abs(v - n) < 0.001);
+
+  if (explicit !== null && !Number.isNaN(explicit)) {
+    if (pickedTotal !== null && Math.abs(explicit - pickedTotal) < 0.001) return pickedTotal;
+    if (bundle !== null && Math.abs(explicit - bundle) < 0.001) return bundle;
+    if (inTotals(explicit)) {
+      if (pickedTotal !== null) return pickedTotal; // إجمالي سلعة أجنبية في سياق عرض جانبي → نصوّب للسلعة المختارة
+      return explicit;
+    }
+    if (inPrices(explicit)) return pickedTotal ?? explicit + fee;
+    // مبلغ صريح غير معروف للكتالوج: لا نتبنّاه — نعتمد حقيقة السلعة المختارة
+    console.warn(`  ⚠️ مبلغ صريح ${explicit} لا يطابق كتالوج الأسعار — اعتماد ${pickedTotal ?? maxKnown} (سلعة المختارة)`);
+    return pickedTotal ?? maxKnown;
+  }
+
+  // لا مبلغ صريح: مطابقة أرقام النص مع قيم الكتالوج — أولوية السلعة المختارة
+  if (pickedTotal !== null && inAny(pickedTotal)) return pickedTotal;
+  for (const t of knownTotals) if (inAny(t)) return t;
+  if (bundle !== null && inAny(bundle)) return bundle;
+  for (const p of prices) if (inAny(p)) return p + fee;
+  return maxKnown;
 }
 export function detectItem(tenant, userText, replyText) {
   const all = `${userText} ${replyText}`;
-  // باندل: إذا ذُكر أكثر من صنف نعيدهم معاً بدل الصنف الأول فقط
-  const matched = ((tenant?.products) || []).filter((p) => p.name && all.includes(p.name.split(" ")[0]));
+  const products = tenant?.products || [];
+  // تطابق الاسم الكامل أولاً (يمنع دمج "حذاء ركض" و"حذاء شتوي" لكلمة أولى مشتركة)
+  const full = products.filter((p) => p.name && all.includes(p.name));
+  const tokens = products.filter((p) => p.name && all.includes(p.name.split(" ")[0]));
+  const matched = full.length ? full : tokens;
   if (matched.length >= 2) return matched.map((p) => p.name).join(" + ");
-  return matched[0]?.name || ((tenant?.products) || []).map((p) => p.name).join(" + ") || "طلب";
+  return matched[0]?.name || products.map((p) => p.name).join(" + ") || "طلب";
 }

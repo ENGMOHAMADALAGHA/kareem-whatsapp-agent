@@ -79,11 +79,11 @@ OPENAI_API_KEY=DEMO_KEY
 AI_MODEL=gemini-flash-lite-latest
 
 PORT=3000
-WEBHOOK_VERIFY_TOKEN=my_secret_token
+WEBHOOK_VERIFY_TOKEN=<توكين قوي عشوائي — لا تستخدم my_secret_token إطلاقاً>
 WHATSAPP_TOKEN=EAA... (من Meta Developers - لا يُحفظ في Git)
 WHATSAPP_PHONE_ID=1300758353117196
+TOKEN_ENC_KEY=<نص عشوائي طويل — إجباري لحفظ توكن أي بوت من /admin (بلا تشفير مرفوض)>
 
-STRIPE_SECRET_KEY= (اختياري - بدونه رابط دفع محلي تجريبي)
 PUBLIC_BASE_URL=https://kareem-whatsapp-agent.onrender.com
 CRM_WEBHOOK_URL= (اختياري - Sheets عبر Make/n8n)
 ADMIN_USER=admin
@@ -132,7 +132,8 @@ DATABASE_URL=postgresql://postgres.<ref>:<pass>@aws-1-<region>.pooler.supabase.c
 - `resolveTenant({phoneNumberId / verifyToken})` - مطابقة صريحة أولاً ثم كريم الافتراضي (async + كاش 60ث)
 - `buildSystemPrompt(tenant)` - Prompt مبني من منتجات كل بوت
 - `downloadWhatsAppMedia` + `transcribeAudio` - فويس (مهلة 15ث + حد 8MB + إعادة محاولة + موديل بديل)
-- `createOrder` + `createPaymentLink` - طلبات + Stripe أو رابط محلي `/pay/:id`
+- `createOrder` + `detectTotal`/`detectItem` - طلبات بلا Stripe ولا `/pay` نهائياً (محافظ/CliQ + إيصال فقط)
+- `finalizePaidOrder` - تأكيد دفع ذري + CSAT عبر نافذة 24h أو قالب (sendWithWindowFallback)
 - `bookAppointment` + `dueReminders` - حجوزات + تذكير تلقائي كل 5د
 - `logEvent` - كل حدث (message/order/booking/csat/...) + webhook خارجي اختياري
 - Inbox: `listInbox` + `setTakeover`/`isTakeover` - إيقاف البوت لتدخل بشري
@@ -156,7 +157,8 @@ GET  /admin/appointments?tenant=        → الحجوزات (🔒)
 POST /admin/appointments/:id/cancel     → إلغاء حجز (🔒)
 POST /admin/remind-run                  → تذكير مواعيد يدوي (🔒)
 GET  /admin/orders?tenant=              → الطلبات (🔒)
-GET  /pay/:orderId                      → صفحة دفع (تجريبي/حقيقي + طلب تقييم بعد الدفع)
+GET  /healthz                           → فحص البقاء (pid + uptime)
+GET  /pay/:orderId                       → (محذوف نهائياً — بلا بوابات دفع؛ محافظ/CliQ + إيصال)
 GET  /admin/crm?tenant=&type=           → سجل الأحداث (🔒)
 GET  /admin/crm/export.csv              → تصدير Excel (🔒)
 POST /admin/cart-remind-run             → تذكير سلة مهجورة يدوي (🔒)
@@ -243,7 +245,7 @@ graph TD
 4. **الخطوة 1. جرّب:** `Phone Number ID 1300758353117196` و `+1 555 667-6129` والتوكن (إنشاء رمز)
 5. **الخطوة 2. إعداد التشغيل → تكوين Webhooks:**
    - **Callback URL:** `https://kareem-whatsapp-agent.onrender.com/webhook`
-   - **Verify Token:** `my_secret_token`
+   - **Verify Token:** قيمة `WEBHOOK_VERIFY_TOKEN` الفعلية من البيئة (ليست `my_secret_token`)
    - **Fields:** `messages` = **مشترك** (أزرق)
    - **Subscribe WABA:** `POST /1329892032314692/subscribed_apps`
 6. **مستلم تجريبي:** `+962790362429` (التجريبي محدود بـ 5 أرقام - للإنتاج: توثيق + رقم حقيقي)
@@ -318,8 +320,8 @@ npm install
 node agent.mjs --test
 node server.mjs
 git add . && git commit -m "msg" && git push
-# Webhook محلي + تكرار
-curl "http://localhost:3000/webhook?hub.mode=subscribe&hub.verify_token=my_secret_token&hub.challenge=12345"
+# Webhook محلي + تكرار (ضع توكينك الفعلي بدل `<TOKEN>`)
+curl "http://localhost:3000/webhook?hub.mode=subscribe&hub.verify_token=<TOKEN>&hub.challenge=12345"
 curl -X POST http://localhost:3000/webhook -H "Content-Type: application/json" -d '{"object":"whatsapp_business_account","entry":[{"changes":[{"value":{"messages":[{"from":"962790362429","id":"wamid.test1","type":"text","text":{"body":"مرحبا"}}]},"field":"messages"}]}]}'
 # Admin (مع Auth)
 curl -u admin:PASS https://kareem-whatsapp-agent.onrender.com/admin/tenants
@@ -342,7 +344,7 @@ curl https://kareem-whatsapp-agent.onrender.com/
 - [x] ردود حتمية + FIFO لكل مرسل + بلا تنحٍّ تلقائي
 - [ ] `CRM_WEBHOOK_URL` → Google Sheets
 - [ ] توثيق Meta + رقم حقيقي عبر Coexistence (المعركة الحالية)
-- [ ] Redis فعلي + BullMQ دائم (الكود جاهز، ينقص سيرفر)
+- [ ] Redis فعلي + BullMQ دائم (الكود جاهز — ينقص سيرفر؛ حتى ذلك: inflight في kv_store + replay عند الإقلاع)
 - [ ] RAG معرفة + قوالب Meta معتمدة (`WA_FOLLOWUP_TEMPLATE`)
 - [ ] Tap (ملغى حالياً — لا بوابات إلكترونية بقرار D2)
 - [ ] `STRIPE_SECRET_KEY` (ملغى نهائياً بقرار D2 — لا يُنفذ أبداً)
@@ -357,7 +359,7 @@ curl https://kareem-whatsapp-agent.onrender.com/
 - Meta Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
 - Render Docs: https://render.com/docs/web-services#port-binding
 - Google AI Studio: https://aistudio.google.com/app/apikey
-- Stripe Keys: https://dashboard.stripe.com/apikeys
+- Meta Template Guides: https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates
 - GitHub: https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
 - Render Service ID: `srv-dabjdru1egvs73b15050`
 

@@ -42,9 +42,15 @@ export function registerPortalRoutes(app) {
     }
   });
   app.post("/portal/reset", async (req, res) => {
+    const { tenantId, phone, code, newPassword } = req.body || {};
+    // حماية تخمين الرمز: 5 محاولات/15 دقيقة لكل حساب+IP (مؤكد حاسوبياً ضد القوة العمياء)
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
+    const lim = checkLimit(`${loginKey(tenantId, phone, ip)}:reset`, 5, 15 * 60 * 1000);
+    if (!lim.allowed) {
+      return res.status(429).json({ ok: false, error: `محاولات كثيرة — حاول بعد ${lim.retryAfter} ثانية` });
+    }
     try {
       const { finishPasswordReset } = await import("../../../portal.mjs");
-      const { tenantId, phone, code, newPassword } = req.body || {};
       await finishPasswordReset(tenantId, phone, code, newPassword);
       res.json({ ok: true });
     } catch (e) {

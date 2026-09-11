@@ -50,8 +50,10 @@ import { getHistory, pushHistory, isDuplicateMessageAsync, updateLastAssistant }
 import { setTakeover, isTakeover, listInbox, getConversation } from "../../inbox/service.mjs";
 import { getKareemReply, processCustomerMessage } from "../../ai/kareem.mjs";
 import { normalizePhone } from "../../utils/phone.mjs";
+import { ammanDateStr } from "../../utils/time.mjs";
 import { updateTenant } from "../../../tenants.mjs";
 import { webhookQueue, voiceQueue } from "../../jobs/queue.mjs";
+import { storeGet, storeSet, storeDel, storeKeys } from "../../../store.mjs";
 import { checkLimit, senderKey } from "../../security/rateLimit.mjs";
 import { createClientUser, listClientUsers } from "../../../portal.mjs";
 
@@ -62,8 +64,9 @@ import { verifyMetaSignature } from "../middleware.mjs";
 // القيد (tenantId, day, slot) يحجز الساعة نفسها مرّة واحدة إلى الأبد.
 function bookingDay(day) {
   if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
-  if (day && /^(اليوم|غداً|أقرب وقت)/.test(day)) return day;
-  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  if (day && /^(اليوم|اليوم)/.test(day)) return ammanDateStr(0);
+  if (day && /^(غداً|غدا)/.test(day)) return ammanDateStr(1);
+  return ammanDateStr(1);
 }
 
 // إنشاء طلب + تعليمات الدفع (يُستخدم للشراء النصي وضغط أزرار المنتجات)
@@ -140,16 +143,34 @@ export function registerWebhookRoutes(app) {
       return res.sendStatus(404);
     }
 
+    // P0-3 — سد نافذة فقدان الرسائل في الطيران:
+    // نُخزّن الحمولة في kv_store (دائم) قبل رد 200، ويمسحها المعالج بعد اكتماله.
+    // لو انقطع السيرفر/أعيد النشر بعد 200 وقبل نهاية المعالجة، تعيد إعادة المعالجة
+    // عند الإقلاع (replayInflightWebhooks) التعامل معها — بلا فقد ولا تكرار (dedup بالـ wamid).
+    const firstMsg = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const hasMessages = !!firstMsg?.id;
+    const inflightKey = `wbh:inflight:${firstMsg?.id || `${body.entry?.[0]?.id || "event"}:${Date.now()}`}`;
+
     // رد فوري لواتساب (يمنع إعادة الإرسال = يمنع الرد المكرر)
     res.status(200).send("EVENT_RECEIVED");
+
+    if (hasMessages) {
+      storeSet(inflightKey, { at: Date.now(), body })
+        .catch(() => {});
+    }
 
     // المعالجة عبر الطابور — مرتبة FIFO لكل مرسل (رسائل نفس الزبون لا تتسابق)
     let senderKey = "unknown";
     try {
-      const firstMsg = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
       if (firstMsg?.from) senderKey = `sender:${firstMsg.from}`;
     } catch { /* مفتاح افتراضي */ }
-    webhookQueue.enqueueOrdered(senderKey, `webhook:${body.entry?.[0]?.id || "event"}`, () => processWebhookBody(body));
+    webhookQueue.enqueueOrdered(senderKey, `webhook:${body.entry?.[0]?.id || "event"}`, async () => {
+      try {
+        await processWebhookBody(body);
+      } finally {
+        if (hasMessages) await storeDel(inflightKey).catch(() => {});
+      }
+    });
   });
 }
 
@@ -473,9 +494,9 @@ async function processWebhookBody(body) {
             logEvent("triage", { tenantId: tenant.id, phone: from, emergency: red, summary: summary.slice(0, 300) }).catch(() => {});
             if (red) {
               await setBookingState(tenant.id, from, null);
-              // موعد طوارئ فريد: تاريخ اليوم + وقت فوري (يسمح بحالات طوارئ متعددة باليوم نفسه)
+              // موعد طوارئ فريد: تاريخ اليوم بمنطقة الأردن + وقت فوري (يسمح بحالات طوارئ متعددة باليوم نفسه)
               const now = new Date();
-              const day = now.toISOString().slice(0, 10);
+              const day = ammanDateStr(0);
               const slot = `طوارئ فوري ${now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
               try {
                 const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: "حالة طارئة 🆘", day, slot });
@@ -826,5 +847,41 @@ async function processWebhookBody(body) {
     }
   } catch (err) {
     console.error(`  ❌ خطأ في معالجة Webhook: ${err.message}`, err.stack);
+  }
+}
+
+// ──────────────────────────────────────────────
+// P0-3 — إعادة المعالجة عند الإقلاع: أي حمولة سُجّلت قبل 200 ولم تُمسح
+// (انقطاع/إعادة نشر أثناء الطيران) تُعاد معالجتها.
+// الـ dedup بالـ wamid يجعل هذا آمناً تماماً: المعالجة المكتملة تُتخطى، والناقصة تُستكمل.
+// ──────────────────────────────────────────────
+export async function replayInflightWebhooks() {
+  let keys = [];
+  try {
+    keys = await storeKeys("wbh:inflight:");
+  } catch {
+    return;
+  }
+  if (!keys.length) return;
+  console.log(`  ♻️ إعادة معالجة ${keys.length} حمولة علّقت أثناء الطيران...`);
+  for (const key of keys) {
+    let rec = null;
+    try {
+      rec = await storeGet(key);
+    } catch { /*  تجاهل */ }
+    if (!rec?.body) {
+      await storeDel(key).catch(() => {});
+      continue;
+    }
+    const firstMsg = rec.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const sender = firstMsg?.from ? `sender:${firstMsg.from}` : "unknown";
+    const label = `replay:${key.split(":").slice(-1)[0]}`;
+    webhookQueue.enqueueOrdered(sender, label, async () => {
+      try {
+        await processWebhookBody(rec.body);
+      } finally {
+        await storeDel(key).catch(() => {});
+      }
+    });
   }
 }

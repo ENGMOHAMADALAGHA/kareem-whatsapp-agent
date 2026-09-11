@@ -186,6 +186,9 @@ function fallbackReplyFor(tenant, userMessage) {
 // ──────────────────────────────────────────────
 // 6. الدالة الأساسية: getKareemReply (مع ذاكرة)
 // ──────────────────────────────────────────────
+// ───────────────
+// 7. الدالة الأساسية: getKareemReply (مع ذاكرة)
+// ───────────────
 export async function getKareemReply(userMessage, phone = "default", tenantInput = null) {
   const tenant = await resolveTenantInput(tenantInput);
   // كريم الحالي يبقى كما هو؛ أي tenant جديد يستخدم prompt مبني من إعداداته
@@ -225,15 +228,9 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
       }
       fullContents.push({ role: "user", parts: [{ text: userMessage }] });
 
-      const response = await withAiTimeout(googleClient.models.generateContent({
-        model: AI_MODEL,
-        contents: fullContents,
-        config: {
-          systemInstruction: prompt,
-          responseMimeType: "application/json",
-          temperature: 0.7,
-        },
-      }));
+      const response = await withAiTimeout((signal) =>
+        fetchGeminiREST(fullContents, prompt, signal)
+      );
       rawText = response.text;
     } else {
       const messages = [{ role: "system", content: prompt }];
@@ -242,12 +239,17 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
       }
       messages.push({ role: "user", content: userMessage });
 
-      const completion = await withAiTimeout(openaiClient.chat.completions.create({
-        model: AI_MODEL,
-        messages,
-        response_format: { type: "json_object" },
-        temperature: 0.7,
-      }));
+      const completion = await withAiTimeout((signal) =>
+        openaiClient.chat.completions.create(
+          {
+            model: AI_MODEL,
+            messages,
+            response_format: { type: "json_object" },
+            temperature: 0.7,
+          },
+          { signal }
+        )
+      );
       rawText = completion.choices[0].message.content;
     }
 
@@ -288,13 +290,48 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
   }
 }
 
-// مهلة صارمة على استدعاء الـ AI — أسوأ حالة محدودة بدل تعليق العامل
-function withAiTimeout(promise) {
+// مهلة صارمة مع إلغاء حقيقي: نعطي المتصل AbortSignal وبموجبه تُقطع الشبكة
+// (لا تركة عمل تستمر باستهلاك API بعد أن سلمنا بالرفض). أسوأ حالة محدودة بدل تعليق العامل.
+function withAiTimeout(makePromise) {
+  const ctrl = new AbortController();
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`AI timeout ${AI_TIMEOUT_MS}ms`)), AI_TIMEOUT_MS);
+    timer = setTimeout(() => {
+      ctrl.abort();
+      reject(new Error(`AI timeout ${AI_TIMEOUT_MS}ms`));
+    }, AI_TIMEOUT_MS);
   });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([makePromise(ctrl.signal), timeout]).finally(() => clearTimeout(timer));
+}
+
+// استدعاء Gemini عبر REST-endpoint مباشرة (fetch + AbortController):
+// الـ SDK الرسمي لا يقبل إلغاء — هذا يمنح مهلة تحليلية حقيقية بدل سباق بلا قطع.
+async function fetchGeminiREST(contents, prompt, signal) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent`,
+    {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json", "x-goog-api-key": GOOGLE_API_KEY },
+      body: JSON.stringify({
+        contents,
+        systemInstruction: { parts: [{ text: prompt }] },
+        generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
+      }),
+    }
+  );
+  if (!res.ok) {
+    const errBody = (await res.text().catch(() => "")).slice(0, 300);
+    throw new Error(`Gemini HTTP ${res.status}: ${errBody}`);
+  }
+  const data = await res.json();
+  const text =
+    data?.candidates?.[0]?.content?.parts
+      ?.filter((p) => p?.text)
+      .map((p) => p.text)
+      .join("") || "";
+  if (!text) throw new Error("Gemini رد فارغ");
+  return { text };
 }
 
 // الاسم المطلوب في التكليف: processCustomerMessage

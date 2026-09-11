@@ -4,10 +4,18 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// قناع سر قبل الطباعة — لا يُطبع أي توكن كاملاً في السجلات
+function maskSecret(s) {
+  if (!s) return "(غير مضبوط)";
+  const str = String(s);
+  return str.length <= 6 ? "••••" : `${str.slice(0, 2)}…${str.slice(-2)}`;
+}
+
 import { PORT, WEBHOOK_VERIFY_TOKEN, WHATSAPP_PHONE_ID, AI_PROVIDER, AI_MODEL, ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
 import { listTenants } from "../../tenants.mjs";
 import { isDemoMode } from "../ai/kareem.mjs";
-import { adminAuth, scopeClient } from "./middleware.mjs";
+import { adminAuth, scopeClient, csrfGuard } from "./middleware.mjs";
+import { replayInflightWebhooks } from "./routes/webhook.mjs";
 import { registerAdminRoutes } from "./routes/admin.mjs";
 import { registerPortalRoutes } from "./routes/portal.mjs";
 import { registerWebhookRoutes } from "./routes/webhook.mjs";
@@ -23,6 +31,8 @@ export function createApp() {
     },
   }));
   app.use(express.urlencoded({ extended: true }));
+  // حماية تغيير الحالة من أصول أجنبية (يُطبق قبل كل المسارات)
+  app.use(csrfGuard);
   // أصول محلية (Tailwind مُضمّن — لا سكربتات خارجية حية داخل الكونسول)
   app.use("/assets", express.static(path.join(__dirname, "..", "..", "assets")));
   app.use("/admin", adminAuth);
@@ -35,6 +45,19 @@ export function createApp() {
       webhook: "/webhook",
       admin: "/admin/tenants",
       tenants: (await listTenants()).length,
+      mode: isDemoMode ? "DEMO" : AI_PROVIDER,
+    });
+  });
+
+  // فحص البقاء/الجاهزية لمزوّد الاستضافة (خفيف: بلا DB حتى لا يفشل الفحص معها)
+  // يُثري أخطاء الإقلاع بدل بوت أصم صامت — 200 فقط إذا كان السيرفر حياً فعلاً
+  app.get("/healthz", (req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: "wasl-agent",
+      pid: process.pid,
+      uptimeSec: Math.round(process.uptime()),
+      now: new Date().toISOString(),
       mode: isDemoMode ? "DEMO" : AI_PROVIDER,
     });
   });
@@ -75,7 +98,7 @@ export function startServer(port = PORT) {
     console.log("═".repeat(60));
     console.log(`  🌐 السيرفر يعمل: http://localhost:${port}`);
     console.log(`  🔗 Webhook URL: http://localhost:${port}/webhook`);
-    console.log(`  🔑 Verify Token: ${WEBHOOK_VERIFY_TOKEN}`);
+    console.log(`  🔑 Verify Token: ${maskSecret(WEBHOOK_VERIFY_TOKEN)}`);
     console.log(`  📱 Phone ID: ${WHATSAPP_PHONE_ID || "(غير مضبوط - وضع محاكاة)"}`);
     console.log(`  🧠 المزود: ${AI_PROVIDER} | النموذج: ${AI_MODEL} | الوضع: ${isDemoMode ? "DEMO" : "API حقيقي"}`);
     // فحص الإعدادات الحرجة عند الإقلاع (لا فشل صامت — تحذير واضح)
@@ -94,6 +117,11 @@ export function startServer(port = PORT) {
     console.log(`  💡 للاختبار المحلي: استخدم ngrok أو similar`);
     console.log(`     ngrok http ${port}`);
     console.log("═".repeat(60) + "\n");
+    // P0-3 — بعد جاهزية الاستماع: استعادة أي حمولات علّقت أثناء الطيران
+    // (انقطاع/إعادة نشر أثناء المعالجة) — بلا فقد ولا تكرار عبر dedup الـ wamid
+    setTimeout(() => {
+      replayInflightWebhooks().catch((e) => console.error(`  ⚠️ فشل replay: ${e.message}`));
+    }, 2500);
   });
   return server;
 }

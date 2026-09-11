@@ -1,6 +1,6 @@
 import { getTenantFull, isTenantActive } from "../../tenants.mjs";
-import { dueReminders, markReminded } from "../../bookings.mjs";
-import { dueCartRemindersAll, markCartReminded, fmtMoney } from "../../orders.mjs";
+import { dueReminders, markReminded, unmarkReminded } from "../../bookings.mjs";
+import { dueCartRemindersAll, markCartReminded, unmarkCartReminded, fmtMoney } from "../../orders.mjs";
 import { logEvent } from "../../crm.mjs";
 import { sendWithWindowFallback } from "../compliance/messaging.mjs";
 import { pushHistory } from "../memory/conversations.mjs";
@@ -18,6 +18,9 @@ export function startSchedulers() {
           const tenant = await getTenantFull(b.tenantId);
           if (!tenant || !isTenantActive(tenant)) continue;
           const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - يوم ${b.day} - الساعة ${b.slot} (${b.id}) في ${tenant.name}.`;
+          // ادّعاء ذري قبل الإرسال — لا رسالتين لنفس الموعد (إما شغل المؤقت أو التشغيل اليدوي)
+          const claimed = await markReminded(b.id, b.tenantId);
+          if (!claimed) continue;
           try {
             // يمر عبر sendWithWindowFallback: (أ) يمتنع عن ألغوا الاشتراك (ب) قالب بديل خارج النافذة
             const r = await sendWithWindowFallback(b.phone, msg, tenant);
@@ -26,11 +29,11 @@ export function startSchedulers() {
             } else {
               await pushHistory(b.phone, "assistant", msg, tenant).catch(() => {});
             }
-            // نعلّم دائماً حتى لا يتكرر مع من ألغوا الاشتراك أو خارج النافذة
-            await markReminded(b.id, b.tenantId);
             logEvent("booking_reminded", { tenantId: b.tenantId, phone: b.phone, bookingId: b.id, skipped: r.ok ? undefined : r.reason }).catch(() => {});
             console.log(`  ⏰ تذكير تلقائي ${b.id} -> ${b.phone}`);
           } catch (e) {
+            // فشل عابر → نفتح الادعاء ليُعاد في الدورة التالية (لا نضيّع التذكير)
+            await unmarkReminded(b.id, b.tenantId);
             console.error(`  ❌ فشل التذكير ${b.id}: ${e.message}`);
           }
         }
@@ -46,24 +49,29 @@ export function startSchedulers() {
           const first = list[0];
           const tenant = await getTenantFull(first.tenantId);
           if (!tenant || !isTenantActive(tenant)) continue;
-          const lines = list.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
-          const msg = list.length === 1
-            ? `يا هلا يا بطل! 👋 شفنا طلبك ${first.id} (${fmtMoney(first.total, first.currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
-            : `يا هلا يا بطل! 👋 عندك ${list.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
+          // ادّعاء ذري لكل الطلبات قبل الإرسال — الطلبات التي أخذها منافس تُتجاهل (لا تكرار)
+          const claimed = [];
+          for (const o of list) {
+            if (await markCartReminded(o.id, o.tenantId)) claimed.push(o);
+          }
+          if (!claimed.length) continue;
+          const lines = claimed.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
+          const msg = claimed.length === 1
+            ? `يا هلا يا بطل! 👋 شفنا طلبك ${claimed[0].id} (${fmtMoney(claimed[0].total, claimed[0].currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
+            : `يا هلا يا بطل! 👋 عندك ${claimed.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
           try {
             // نفس سياسة الامتثال: من ألغى الاشتراك لا يرى سلة مهجورة، وخارج النافذة قالب بديل
             const r = await sendWithWindowFallback(first.phone, msg, tenant);
             if (!r.ok) {
-              console.log(`  ⏭️ سلة مهجورة (${list.length}) -> ${first.phone}: ${r.reason}`);
+              console.log(`  ⏭️ سلة مهجورة (${claimed.length}) -> ${first.phone}: ${r.reason}`);
             } else {
               await pushHistory(first.phone, "assistant", msg, tenant).catch(() => {});
-              console.log(`  🛒 سلة مهجورة (${list.length}) -> ${first.phone}`);
+              console.log(`  🛒 سلة مهجورة (${claimed.length}) -> ${first.phone}`);
             }
-            for (const o of list) {
-              await markCartReminded(o.id, o.tenantId);
-            }
-            logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: list.map((o) => o.id), total: list.reduce((s, o) => s + Number(o.total), 0), skipped: r.ok ? undefined : r.reason }).catch(() => {});
+            logEvent("cart_reminded", { tenantId: first.tenantId, phone: first.phone, orderIds: claimed.map((o) => o.id), total: claimed.reduce((s, o) => s + Number(o.total), 0), skipped: r.ok ? undefined : r.reason }).catch(() => {});
           } catch (e) {
+            // فشل عابر → نفتح الادعاءات ليُعادوا في الدورة التالية
+            for (const o of claimed) await unmarkCartReminded(o.id, o.tenantId);
             console.error(`  ❌ فشل تذكير السلة لـ ${first.phone}: ${e.message}`);
           }
         }
