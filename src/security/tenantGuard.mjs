@@ -55,27 +55,39 @@ function wrapModel(delegate, model, tenantId) {
       if (op === "findUnique") {
         return async (args = {}) => checkRow(tenantId, await fn.call(target, args));
       }
-      // تحديث/حذف مفرد: تحقق ثم نفّذ (حماية من TOCTOU بالحد الأدنى المقبول)
+      // تحديث/حذف مفرد: ذري مشروط بالنطاق — يستبعد التحقق-ثم-التنفيذ (لا TOCTOU).
+      // updateMany/deleteMany مع where يتضمن tenantId تستبعد السجلات من نطاقات أخرى
+      // في استعلام واحد، والعدّ يخبرنا إن كان السجل موجوداً ضمن النطاق أصلاً.
       if (op === "update") {
         return async (args = {}) => {
-          const existing = await target.findUnique({ where: args.where, select: { tenantId: true } }).catch(() => null);
-          if (!existing || existing.tenantId !== tenantId) {
+          const upd = await target
+            .updateMany({ where: { ...args.where, tenantId }, data: args.data })
+            .catch(() => ({ count: 0 }));
+          if (!upd?.count) {
             const e = new Error("السجل غير موجود في نطاقك");
             e.code = "TENANT_DENIED";
             throw e;
           }
-          return fn.call(target, args);
+          return target.findUnique({ where: args.where }).catch(() => null);
         };
       }
       if (op === "delete") {
         return async (args = {}) => {
-          const existing = await target.findUnique({ where: args.where, select: { tenantId: true } }).catch(() => null);
-          if (!existing || existing.tenantId !== tenantId) {
+          const before = await target.findUnique({ where: args.where }).catch(() => null);
+          if (!before || before.tenantId !== tenantId) {
             const e = new Error("السجل غير موجود في نطاقك");
             e.code = "TENANT_DENIED";
             throw e;
           }
-          return fn.call(target, args);
+          const del = await target
+            .deleteMany({ where: { ...args.where, tenantId } })
+            .catch(() => ({ count: 0 }));
+          if (!del?.count) {
+            const e = new Error("السجل غير موجود في نطاقك");
+            e.code = "TENANT_DENIED";
+            throw e;
+          }
+          return before;
         };
       }
       if (op === "upsert") {

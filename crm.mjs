@@ -25,17 +25,15 @@ export async function logEvent(type, data = {}) {
   }
 
   // webhook خارجي اختياري (Google Sheets عبر Make/n8n)
+  // مهلة + إرسال في الخلفية: طرف خارجي عالق لا يعطّل معالجة رسائل
   const hook = process.env.CRM_WEBHOOK_URL;
   if (hook) {
-    try {
-      await fetch(hook, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(event),
-      });
-    } catch (e) {
-      console.error(`  ⚠️ فشل CRM webhook: ${e.message}`);
-    }
+    fetch(hook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+      signal: AbortSignal.timeout(3000),
+    }).catch((e) => console.error(`  ⚠️ فشل CRM webhook: ${e.message}`));
   }
   return event;
 }

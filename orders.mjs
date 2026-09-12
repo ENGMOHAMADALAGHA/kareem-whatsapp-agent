@@ -7,7 +7,7 @@ const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice
 
 // كل الدوال هنا تمر عبر tenantDb — لا وصول مباشر لـ Prisma.
 
-export async function createOrder({ tenantId, phone, name, items, total, currency = "USD" }) {
+export async function createOrder({ tenantId, phone, name, items, total, currency = DEFAULT_CURRENCY }) {
   phone = normalizePhone(phone);
   const row = await tenantDb(tenantId).order.create({
     data: {
@@ -56,12 +56,13 @@ export async function listOrdersAll() {
 }
 
 export async function markOrderPaid(id, tenantId) {
-  // التأكيد فقط عبر تحقق الإيصال أو الموظف — تحديث ذري يمنع التأكيد المزدوج
-  const row = await tenantDb(tenantId).order.update({
-    where: { id },
+  // ذري: يشترط حالة قابلة للدفع — يرفض ترقية ملغي/مرفوض أو تأكيد مزدوج
+  const upd = await tenantDb(tenantId).order.updateMany({
+    where: { id, status: { notIn: ["canceled", "rejected", "paid"] } },
     data: { status: "paid", paidAt: new Date() },
-  }).catch(() => null);
-  return rowToOrder(row);
+  }).catch(() => ({ count: 0 }));
+  if (!upd?.count) return null;
+  return rowToOrder(await tenantDb(tenantId).order.findUnique({ where: { id } }).catch(() => null));
 }
 
 // سلة مهجورة: طلبات pending بدون دفع وبدون تذكير ومر عليها N دقيقة
@@ -152,16 +153,11 @@ export async function findRecentPending(tenantId, phone, minutes = 30) {
 
 // إلغاء كل الطلبات المفتوحة للرقم (نسيان/استبدال) — يرجع عدد الملغاة
 export async function cancelOpenOrders(tenantId, phone) {
-  const T = tenantDb(tenantId);
-  const rows = await T.order.findMany({
+  const r = await tenantDb(tenantId).order.updateMany({
     where: { phone: normalizePhone(phone), status: { in: OPEN_STATUSES } },
-  }).catch(() => []);
-  let n = 0;
-  for (const r of rows) {
-    await T.order.update({ where: { id: r.id }, data: { status: "canceled" } }).catch(() => null);
-    n++;
-  }
-  return n;
+    data: { status: "canceled" },
+  }).catch(() => ({ count: 0 }));
+  return r?.count || 0;
 }
 
 // مبلغ صريح بكلام العميل نفسه (لا من كلام البوت) — أو null

@@ -1,4 +1,16 @@
 import { startServer } from "./agent.mjs";
+import { db } from "./db.mjs";
+
+// إغلاق نظيف: أغلق اتصالات القاعدة قبل الخروج حتى لا تُترك اتصالات عالقة
+function gracefulShutdown(signal) {
+  console.error(`  🛑 ${signal} — إغلاق نظيف...`);
+  Promise.resolve(db()?.$disconnect?.())
+    .catch((e) => console.error(`  ⚠️ فشل إغلاق القاعدة: ${e?.message}`))
+    .finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref?.();
+}
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 // سيرفر مستقل - يستورد منطق كريم من agent.mjs
 // للتشغيل: node server.mjs أو npm start
