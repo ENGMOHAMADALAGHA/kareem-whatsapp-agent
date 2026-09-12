@@ -106,15 +106,30 @@ try {
     console.log(`  ✅ ${table}: ${copied} صف`);
   }
 
-  // إعادة ضبط المتسلسلات (auto-increment) على نسبها الصحيح بعد النسخ
-  const identities = (await dst.query(
-    "SELECT c.relname AS table_name, a.attname AS column_name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid WHERE n.nspname='public' AND a.attidentity IN ('a','d')"
-  )).rows;
-  for (const { table_name, column_name } of identities) {
-    await dst.query(
-      `SELECT setval(pg_get_serial_sequence('"${table_name}"','${column_name}'), COALESCE((SELECT MAX("${column_name}") FROM "${table_name}"), 1))`
+  // إعادة ضبط المتسلسلات (auto-increment) على نسبها الصحيح بعد النسخ.
+  // نغطي نمطي: identity (attidentity) وأي DEFAULT به nextval(...) — لأن schema.sql
+  // يعرّف id كمولد SERIAL، وتجاهل ذلك كان يغيّب الكتابة الجديدة بعد النقل (تعارض pkey).
+  const sids = (await dst.query(`
+    SELECT c.relname AS table_name, a.attname AS column_name
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = c.oid
+    LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+    WHERE n.nspname='public' AND a.attnum > 0 AND NOT a.attisdropped
+      AND (a.attidentity IN ('a','d')
+           OR (ad.adnum IS NOT NULL AND pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval(%'))
+    OR EXISTS (SELECT 1 FROM pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname))
+  `)).rows;
+  for (const { table_name, column_name } of sids) {
+    const seq = await dst.query(
+      `SELECT pg_get_serial_sequence('"${table_name}"','${column_name}') AS s`
     );
-    console.log(`  🔢 تسلسل ${table_name}.${column_name} ضُبط على القيمة التالية`);
+    const seqName = seq.rows[0]?.s;
+    if (!seqName) continue;
+    await dst.query(
+      `SELECT setval('${seqName}', COALESCE((SELECT MAX("${column_name}") FROM "${table_name}"), 1))`
+    );
+    console.log(`  🔢 تسلسل ${table_name}.${column_name} ضُبط عبر ${seqName}`);
   }
 
   const total = summary.reduce((a, [, n]) => a + n, 0);
