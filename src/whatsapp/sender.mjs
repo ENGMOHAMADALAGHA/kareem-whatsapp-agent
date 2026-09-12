@@ -162,24 +162,6 @@ export async function sendTemplate(to, templateName, params = [], tenantInput = 
   }, tenantInput);
 }
 
-// إرسال نص مع تجاوز نافذة 24h: جرّب الرسالة الحرة أولاً (تفضيل Meta)،
-// وعند WINDOW_CLOSED (code 131047) أعد الإرسال عبر قالب معتمد إن وُجد
-// (WA_FOLLOWUP_TEMPLATE أو template عبر opts) — ألا وفشل الاتصال يُرمى الخطأ.
-export async function sendWithWindowFallback(to, text, tenantInput = null, opts = {}) {
-  try {
-    return await sendWhatsAppMessage(to, text, tenantInput);
-  } catch (err) {
-    if (err?.code !== "WINDOW_CLOSED") throw err;
-    const template = opts.template || WA_FOLLOWUP_TEMPLATE;
-    if (!template) {
-      console.error(`  ⏳ نافذة 24h مغلقة بلا قالب بديل — لم تصل لـ ${to}: ${err.message}`);
-      throw err;
-    }
-    console.warn(`  📋 نافذة 24h مغلقة — إعادة عبر القالب "${template}" لـ ${to}`);
-    return await sendTemplate(to, template, [text], tenantInput);
-  }
-}
-
 // أزرار افتراضية لكل tenant من منتجاته
 export async function defaultButtonsFor(tenant) {
   const t = await resolveTenantInput(tenant);

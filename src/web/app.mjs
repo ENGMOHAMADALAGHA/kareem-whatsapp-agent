@@ -14,6 +14,7 @@ function maskSecret(s) {
 import { PORT, WEBHOOK_VERIFY_TOKEN, WHATSAPP_PHONE_ID, AI_PROVIDER, AI_MODEL, ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
 import { listTenants } from "../../tenants.mjs";
 import { isDemoMode } from "../ai/kareem.mjs";
+import { db } from "../../db.mjs";
 import { adminAuth, scopeClient, csrfGuard } from "./middleware.mjs";
 import { replayInflightWebhooks } from "./routes/webhook.mjs";
 import { registerAdminRoutes } from "./routes/admin.mjs";
@@ -65,9 +66,20 @@ export function createApp() {
     });
   });
 
-  // فحص البقاء/الجاهزية لمزوّد الاستضافة (خفيف: بلا DB حتى لا يفشل الفحص معها)
-  // يُثري أخطاء الإقلاع بدل بوت أصم صامت — 200 فقط إذا كان السيرفر حياً فعلاً
-  app.get("/healthz", (req, res) => {
+  // فحص البقاء/الجاهزية لمزوّد الاستضافة — الآن يختبر القاعدة فعلياً:
+// "حية" = السيرفر + قاعدة البيانات معاً؛ وتعطل إحداهما يُظهر 503 (لا صحة وهمية)
+  app.get("/healthz", async (req, res) => {
+    let dbOk = true;
+    try {
+      const d = db();
+      if (!d) throw new Error("no-db");
+      await d.$queryRaw`SELECT 1`;
+    } catch {
+      dbOk = false;
+    }
+    if (!dbOk) {
+      return res.status(503).json({ ok: false, service: "wasl-agent", error: "db-unreachable" });
+    }
     res.status(200).json({
       ok: true,
       service: "wasl-agent",

@@ -15,4 +15,10 @@ process.on("uncaughtException", (err) => {
   setImmediate(() => process.exit(1));
 });
 
+// الإنتاج بلا قاعدة = بوت أصم — ارفض الإقلاع بدل "صحة وهمية"
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+  console.error("  ☠️ الإنتاج يتطلب DATABASE_URL — أرفض الإقلاع (فشل-سريع) بدل بوت أصم.");
+  process.exit(1);
+}
+
 startServer();

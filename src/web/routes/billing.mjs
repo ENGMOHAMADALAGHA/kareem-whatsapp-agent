@@ -1,6 +1,6 @@
 import { getPublicOrder, markOrderPaid, fmtMoney } from "../../../orders.mjs";
 import { getTenantFull } from "../../../tenants.mjs";
-import { sendWithWindowFallback } from "../../whatsapp/sender.mjs";
+import { sendWithWindowFallback } from "../compliance/messaging.mjs";
 import { pushHistory } from "../../memory/conversations.mjs";
 import { requestCsat } from "../../../engage.mjs";
 import { logEvent } from "../../../crm.mjs";

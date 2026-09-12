@@ -76,7 +76,7 @@ async function createOrderWithPayment(tenant, from, name, text, result) {
   if (!tenant) return; // تحصين: لا ننشئ طلباً بلا مستأجر
   const { findRecentPending, cancelOpenOrders } = await import("../../../orders.mjs");
   const item = detectItem(tenant, text, result.reply);
-  const freshTotal = totalForItem(tenant, item, text);
+  const freshTotal = detectTotal(tenant, text, result.reply || "");
   let order = await findRecentPending(tenant.id, from, 30);
   let isNew = false;
   const userItem = detectUserItem(tenant, text);
@@ -133,7 +133,7 @@ export function registerWebhookRoutes(app) {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-    console.log(`  🔍 GET /webhook - mode=${mode} token=${token} challenge=${challenge}`);
+    console.log(`  🔍 GET /webhook - mode=${JSON.stringify(mode)} challenge=${JSON.stringify(challenge)}`); // لا نطبع التوكن أبداً
 
     // أولاً: جرّب مطابقة tenant حسب verify_token
     const tenant = token ? await resolveTenant({ verifyToken: token }) : null;
@@ -144,10 +144,10 @@ export function registerWebhookRoutes(app) {
       return res.status(200).send(challenge);
     }
 
-    console.warn(`  ❌ فشل التحقق: token المتوقع="${expected}" المستلم="${token}"`);
+    console.warn(`  ❌ فشل التحقق: token المتوقع="${String(expected).slice(0, 2)}…" المستلم="${token ? String(token).slice(0, 2) + "…" : "(فارغ)"}"`);
     return res.sendStatus(403);
   });
-  app.post("/webhook", verifyMetaSignature, (req, res) => {
+  app.post("/webhook", verifyMetaSignature, async (req, res) => {
     const body = req.body;
 
     // التحقق المبدئي من نوع الحدث
@@ -164,13 +164,18 @@ export function registerWebhookRoutes(app) {
     const hasMessages = !!firstMsg?.id;
     const inflightKey = `wbh:inflight:${firstMsg?.id || `${body.entry?.[0]?.id || "event"}:${Date.now()}`}`;
 
+    // P0-3 — استدامة قبل رد 200: نُثبّت الحمولة في kv_store قبل الإقرار حتى لا
+    // تضيع رسالة لو انقطع السيرفر بين الاستلام والمعالجة (Meta لا تعيد بعد 200).
+    if (hasMessages) {
+      try {
+        await storeSet(inflightKey, { at: Date.now(), body });
+      } catch (e) {
+        console.error(`  ⚠️ فشل حفظ الحمولة الطائرة قبل 200: ${e?.message || e}`);
+      }
+    }
+
     // رد فوري لواتساب (يمنع إعادة الإرسال = يمنع الرد المكرر)
     res.status(200).send("EVENT_RECEIVED");
-
-    if (hasMessages) {
-      storeSet(inflightKey, { at: Date.now(), body })
-        .catch(() => {});
-    }
 
     // المعالجة عبر الطابور — مرتبة FIFO لكل مرسل (رسائل نفس الزبون لا تتسابق)
     let senderKey = "unknown";
@@ -224,6 +229,8 @@ async function processWebhookBody(body) {
           }
           hasMessage = true;
 
+          // درع لكل رسالة على حدة: تعثّر رسالة ما يجب ألا يُسقط باقي دفعة Meta
+          try {
           // استخراج رقم العميل ونص الرسالة (يدعم الأزرار + الفويس)
           const from = normalizePhone(msg.from); // رقم العميل — موحد E.164 دائماً
           // حد المعدل: 30 رسالة/دقيقة لكل رقم (حماية من الحلقات وتكلفة AI)
@@ -892,6 +899,9 @@ async function processWebhookBody(body) {
           }
 
           console.log(`${"─".repeat(60)}\n`);
+          } catch (msgErr) {
+            console.error(`  ❌ خطأ معالجة رسالة ${msg?.id || "؟"}: ${msgErr?.message || msgErr}`);
+          }
         }
 
         // تجاهل حالات statuses (delivered/read) بدون رسائل

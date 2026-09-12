@@ -180,25 +180,6 @@ export function detectUserItem(tenant, userText) {
   return matched[0].name;
 }
 
-// الإجمالي الحتمي لصنف معروف: مبلغ العميل الصريح أولاً، ثم سعر الكتالوج + توصيل.
-// كلام البوت التسويقي (عروض/باندل) لا يحدد المبلغ أبداً — هذا كان يولّد طلب حزام بـ 70.
-export function totalForItem(tenant, itemName, userText = "") {
-  const explicit = detectUserTotal(userText);
-  if (explicit !== null) return explicit;
-  const fee = Number(tenant?.deliveryFee || 0);
-  const products = tenant?.products || [];
-  const item = String(itemName || "");
-  if (item.includes("+")) {
-    const bundle = tenant?.bundleOffer?.enabled ? Number(tenant.bundleOffer.price) : null;
-    if (bundle !== null && !Number.isNaN(bundle)) return bundle;
-  } else {
-    const first = item.split(" ")[0];
-    const p = products.find((x) => x.name && (x.name === item || (first && x.name.split(" ")[0] === first)));
-    if (p) return Number(p.price) + fee;
-  }
-  return Math.max(...products.map((x) => Number(x.price)), 0) + fee;
-}
-
 // تعليق الطلب للمراجعة اليدوية (إيصال مشبوه/غير مطابق) + حفظ نتيجة فحص الـ AI
 export async function markOrderReview(id, tenantId, review) {
   const row = await tenantDb(tenantId).order.update({
