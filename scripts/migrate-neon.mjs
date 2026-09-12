@@ -46,31 +46,61 @@ try {
     process.exit(1);
   }
 
-  const tables = (await src.query(
-    "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> 'prisma_migrations' ORDER BY tablename"
-  )).rows.map((r) => r.tablename);
+  // ترتيب صريح: الأب قبل الابن (FK) — tenants أولاً ثم جداول النطاق ثم البواقي
+  const ORDER = [
+    "tenants",
+    "tenant_users",
+    "orders",
+    "appointments",
+    "messages",
+    "ratings",
+    "broadcasts",
+    "events",
+    "kv_store",
+  ];
+  const existing = new Set(
+    (await src.query("SELECT tablename FROM pg_tables WHERE schemaname='public'"))
+      .rows.map((r) => r.tablename)
+  );
+  const tables = ORDER.filter((t) => existing.has(t));
 
   const TOTAL_START = Date.now();
   const summary = [];
   for (const table of tables) {
     const cols = (await src.query(
-      "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position",
+      "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position",
       [table]
-    )).rows.map((r) => r.column_name);
+    )).rows;
     if (!cols.length) continue;
+    const colNames = cols.map((c) => c.column_name);
+    // إرسال الحقول النوع json صراحةً كسلاسل (بدل اعتماد التحويل الضمني من pg)
+    const toParam = (row, c) => {
+      const v = row[c.column_name];
+      if (v === null || v === undefined) return null;
+      if (c.data_type === "json" || c.data_type === "jsonb") return JSON.stringify(v);
+      return v;
+    };
 
-    const colList = cols.map((c) => `"${c}"`).join(", ");
-    const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+    const colList = colNames.map((c) => `"${c}"`).join(", ");
+    const placeholders = colNames.map((_, i) => `$${i + 1}`).join(", ");
     const insert = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
 
     let copied = 0;
-    const res = await src.query(`SELECT ${colList} FROM "${table}"`);
-    for (let i = 0; i < res.rows.length; i += 500) {
-      const batch = res.rows.slice(i, i + 500);
-      for (const row of batch) {
-        await dst.query(insert, cols.map((c) => row[c]));
+    try {
+      const res = await src.query(`SELECT ${colList} FROM "${table}"`);
+      for (let i = 0; i < res.rows.length; i += 500) {
+        const batch = res.rows.slice(i, i + 500);
+        for (const row of batch) {
+          await dst.query(insert, colNames.map((cname) => {
+            const c = cols.find((cc) => cc.column_name === cname);
+            return toParam(row, c);
+          }));
+        }
+        copied += batch.length;
       }
-      copied += batch.length;
+    } catch (e) {
+      console.error(`  ❌ الجدول ${table}: ${e?.message || e}`);
+      process.exit(1);
     }
     summary.push([table, copied]);
     console.log(`  ✅ ${table}: ${copied} صف`);
