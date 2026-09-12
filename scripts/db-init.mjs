@@ -1,4 +1,5 @@
 // تهيئة قاعدة فراغ (fresh) من prisma/schema.sql — آمنة: لا يلمس قاعدة قائمة أبداً
+import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

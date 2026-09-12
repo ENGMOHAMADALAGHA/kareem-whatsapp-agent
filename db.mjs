@@ -13,6 +13,14 @@ function normalizedUrl() {
   if (url.includes(":6543/") && !url.includes("pgbouncer=")) {
     url += (url.includes("?") ? "&" : "?") + "pgbouncer=true&connection_limit=1";
   }
+  // صبيب Neon (اسم مضيف يحوي -pooler.) — اتصال معاملاتي خفيف
+  if (/-pooler\./.test(url) && !url.includes("pgbouncer=")) {
+    url += (url.includes("?") ? "&" : "?") + "pgbouncer=true";
+  }
+  // Neon يتطلب TLS صراحةً — نضمنه حتى لو حذفه المستخدم من الرابط
+  if (/neon\.tech/.test(url) && !/sslmode=/.test(url)) {
+    url += (url.includes("?") ? "&" : "?") + "sslmode=require";
+  }
   return url;
 }
 
