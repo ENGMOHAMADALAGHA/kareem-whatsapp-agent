@@ -75,8 +75,16 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
   const envVerify = process.env.WEBHOOK_VERIFY_TOKEN || "my_secret_token";
 
   if (phoneNumberId) {
-    // أولاً: مطابقة صريحة (بوت عنده رقمه الخاص)
-    const exact = tenants.find((t) => t.phoneNumberId && t.phoneNumberId === phoneNumberId);
+    // أولاً: كل البوتات المسجلة على هذا الرقم
+    const matches = tenants.filter((t) => t.phoneNumberId && t.phoneNumberId === phoneNumberId);
+    if (matches.length > 1) {
+      // رقم مشترك بين أكثر من بوت (حالة الكشف التجريبي) — نفضّل الافتراضي كريم
+      // لمنع خلط الردود، ونحذر قبل الاختيار حتى ينتبه المسؤول للرقم المكرر.
+      console.warn(`  ⚠️ رقم مشترك: ${phoneNumberId} مسجَّل عند ${matches.map((t) => t.id).join("، ")} — سيُفضَّل بوت كريم`);
+      const def = matches.find((t) => t.id === "kareem-sport") || matches[0];
+      return withEnvDefaults(def);
+    }
+    const exact = matches[0];
     if (exact) return withEnvDefaults(exact);
     // ثانياً: الافتراضي (كريم) عند تطابق رقم البيئة المشترك
     const def = tenants.find((t) => t.id === "kareem-sport" && (t.phoneNumberId || envPhoneId) === phoneNumberId)
