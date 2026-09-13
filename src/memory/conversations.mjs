@@ -13,10 +13,35 @@ async function tenantOf(input) {
 }
 
 const conversations = new Map(); // phone -> [{role, text, timestamp}]
+const MAX_CONVERSATIONS = Number(process.env.MEMORY_MAX_KEYS || 2000);
+
+function pruneConversations() {
+  if (conversations.size <= MAX_CONVERSATIONS) return;
+  // LRU بسيط: احذف الأقدم تحديثاً أولاً
+  const entries = [...conversations.entries()].sort((a, b) => (a[1].updatedAt || 0) - (b[1].updatedAt || 0));
+  for (const [k] of entries) {
+    conversations.delete(k);
+    if (conversations.size <= MAX_CONVERSATIONS) break;
+  }
+}
 
 // ── منع التكرار: Meta يعيد إرسال نفس الرسالة إذا تأخر الـ 200 ──
 const seenMessageIds = new Map(); // wamid -> timestamp
 const SEEN_TTL_MS = 1000 * 60 * 60 * 24; // 24 ساعة
+const SEEN_MAX = Number(process.env.SEEN_MAX_KEYS || 5000);
+
+function pruneSeen() {
+  if (seenMessageIds.size <= SEEN_MAX) return;
+  const now = Date.now();
+  for (const [k, ts] of seenMessageIds) {
+    if (now - ts > SEEN_TTL_MS) seenMessageIds.delete(k);
+  }
+  // لو ما زال ممتلئاً بمعرفات طازجة: احذف الأقدم إدخالاً (Map يحفظ الترتيب)
+  for (const k of seenMessageIds.keys()) {
+    if (seenMessageIds.size <= SEEN_MAX) break;
+    seenMessageIds.delete(k);
+  }
+}
 // تحديث آخر رد للمساعد (مثلاً بعد إلحاق تعليمات الدفع) — كاش + DB
 export async function updateLastAssistant(phone, text, tenantInput) {
   const tenant = await tenantOf(tenantInput);
@@ -50,15 +75,10 @@ export async function updateLastAssistant(phone, text, tenantInput) {
 
 export function isDuplicateMessage(msgId) {
   if (!msgId) return false;
-  // تنظيف دوري
-  if (seenMessageIds.size > 2000) {
-    const now = Date.now();
-    for (const [k, ts] of seenMessageIds) {
-      if (now - ts > SEEN_TTL_MS) seenMessageIds.delete(k);
-    }
-  }
+  pruneSeen();
   if (seenMessageIds.has(msgId)) return true;
   seenMessageIds.set(msgId, Date.now());
+  pruneSeen();
   // ثبات عبر restart: احفظ المعرف في KvStore (fire-and-forget)
   persistSeenMessage(msgId);
   return false;
@@ -69,27 +89,28 @@ export function isDuplicateMessage(msgId) {
 export async function isDuplicateMessageAsync(msgId) {
   if (!msgId) return false;
   if (seenMessageIds.has(msgId)) return true;
+  const remember = (dup) => {
+    seenMessageIds.set(msgId, Date.now());
+    pruneSeen();
+    return dup;
+  };
   try {
     const { redisSetNx } = await import("../jobs/redisClient.mjs");
     const dup = await redisSetNx(`wamid:${msgId}`, SEEN_TTL_MS);
     if (dup === true) {
-      seenMessageIds.set(msgId, Date.now());
-      return true;
+      return remember(true);
     }
     if (dup === false) {
-      seenMessageIds.set(msgId, Date.now());
       persistSeenMessage(msgId);
-      return false;
+      return remember(false);
     }
     // dup === null: لا Redis — تحقق من DB ثم سجّل
     const { storeGet } = await import("../../store.mjs");
     if (await storeGet(`wamid:${msgId}`)) {
-      seenMessageIds.set(msgId, Date.now());
-      return true;
+      return remember(true);
     }
-    seenMessageIds.set(msgId, Date.now());
     persistSeenMessage(msgId);
-    return false;
+    return remember(false);
   } catch {
     return isDuplicateMessage(msgId);
   }
@@ -139,6 +160,7 @@ export async function pushHistory(phone, role, text, tenantInput) {
   if (!entry) {
     entry = { messages: [], updatedAt: Date.now() };
     conversations.set(key, entry);
+    pruneConversations();
   }
   entry.messages.push({ role, text, ts: Date.now() });
   if (entry.messages.length > MAX_HISTORY) entry.messages.shift();

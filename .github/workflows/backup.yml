@@ -1,0 +1,32 @@
+name: Daily Backup
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install pg client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: pg_dump (custom format)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL secret missing"; exit 1; fi
+          mkdir -p backups
+          FILE="backups/wasl_$(date -u +%Y%m%d_%H%M).dump"
+          pg_dump "$DATABASE_URL" --format=custom -f "$FILE"
+          ls -lh "$FILE"
+      - name: Upload backup artifact (7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasl-backup
+          path: backups/*.dump
+          retention-days: 7

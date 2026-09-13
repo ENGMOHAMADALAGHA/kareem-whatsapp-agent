@@ -1,0 +1,175 @@
+// راوتر البوتات والمستخدمين: tenants + preview + test-link + invites + users
+import { getTenantFull, listTenants, addTenant } from "../../../../tenants.mjs";
+import { getMemoryStats } from "../../../memory/conversations.mjs";
+import { sendWithWindowFallback } from "../../../compliance/messaging.mjs";
+import { logEvent } from "../../../../crm.mjs";
+import { resolveScope, denyGlobal } from "./scope.mjs";
+
+export function registerTenantRoutes(app) {
+  app.get("/admin/queue", async (req, res) => {
+    const { webhookQueue } = await import("../../../jobs/queue.mjs");
+    res.json({ ok: true, ...webhookQueue.stats() });
+  });
+  app.get("/admin/tenants", async (req, res) => {
+    const list = await listTenants();
+    res.json({ count: list.length, tenants: list, memory: getMemoryStats() });
+  });
+  app.post("/admin/tenants", async (req, res) => {
+    try {
+      const created = await addTenant(req.body || {});
+      console.log(`  ➕ tenant جديد: ${created.id} (${created.name}) plan=${created.plan}`);
+      const { whatsappToken: _s, ...safe } = created;
+      res.status(201).json({ ok: true, tenant: { ...safe, hasOwnToken: !!created.whatsappToken } });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  app.patch("/admin/tenants/:id", async (req, res) => {
+    // عزل العملاء: JWT العميل مقيد ببوته فقط — أي id آخر مرفوض
+    if (req.clientTenant && req.params.id !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذا البوت ليس لك" });
+    }
+    try {
+      const { updateTenant, isTrialExpired } = await import("../../../../tenants.mjs");
+      const updated = await updateTenant(req.params.id, req.body || {});
+      console.log(`  🔌 tenant ${updated.id} enabled=${updated.enabled} plan=${updated.plan}`);
+      res.json({ ok: true, tenant: { id: updated.id, enabled: updated.enabled, plan: updated.plan, trialExpired: isTrialExpired(updated) } });
+    } catch (e) {
+      // P2025 = البوت غير موجود بهذه القاعدة (قائمة قديمة؟ سيرفر مختلف؟) — 404 واضحة بدل 400 عمياء
+      if (e?.code === "P2025") {
+        return res.status(404).json({ ok: false, error: `البوت "${req.params.id}" غير موجود — حدّث قائمة البوتات وحاول مجدداً` });
+      }
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  // معاينة منظور العميل (سوبر فقط): رابط بوابة مؤقت 10 دقائق لنفس البوت
+  // للعروض التقديمية — العميل يرى بوابته بالضبط، بنفس العزل الكامل
+  app.get("/admin/preview/:tenantId", async (req, res) => {
+    if (!req.isSuperAdmin) {
+      return res.status(403).json({ ok: false, error: "المعاينة للسوبر أدمن فقط" });
+    }
+    const t = await getTenantFull(req.params.tenantId);
+    if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const { signPreviewToken } = await import("../../../../portal.mjs");
+    const { PUBLIC_BASE_URL } = await import("../../../config/env.mjs");
+    const base = (PUBLIC_BASE_URL || "").replace(/\/$/, "");
+    const url = `/portal/?tenant=${encodeURIComponent(t.id)}&preview=${encodeURIComponent(signPreviewToken(t.id))}`;
+    logEvent("preview", { tenantId: t.id }).catch(() => {});
+    res.json({ ok: true, tenantId: t.id, url, absoluteUrl: base ? base + url : url, expiresIn: "10m" });
+  });
+  // حذف بوت (سوبر فقط عبر SUPER_ONLY) — الحذف متتالٍ لكل بياناته
+  app.delete("/admin/tenants/:id", async (req, res) => {
+    try {
+      const { deleteTenant } = await import("../../../../tenants.mjs");
+      const out = await deleteTenant(req.params.id);
+      console.log(`  🗑️ حذف tenant: ${out.id}`);
+      res.json({ ok: true, deleted: out.id });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  // فحص الربط الحي: هل Phone ID + Token شغالان فعلاً على Meta؟ (وضع Coexistence)
+  app.post("/admin/tenants/:id/test-link", async (req, res) => {
+    if (req.clientTenant && req.params.id !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذا البوت ليس لك" });
+    }
+    const t = await getTenantFull(req.params.id);
+    if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const token = t.whatsapp_token;
+    const phoneId = t.phone_number_id;
+    if (!token || !phoneId) {
+      return res.json({ ok: false, linked: false, reason: "لا توجد بيانات ربط — أدخل Phone ID و Token أولاً" });
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let r, data;
+      try {
+        r = await fetch(`https://graph.facebook.com/v18.0/${phoneId}?fields=id,display_phone_number,verified_name,quality_rating`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: ctrl.signal,
+        });
+        data = await r.json().catch(() => ({}));
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!r.ok) {
+        return res.json({ ok: false, linked: false, reason: data?.error?.message || ("Meta HTTP " + r.status) });
+      }
+      logEvent("link_test", { tenantId: t.id, ok: true }).catch(() => {});
+      res.json({ ok: true, linked: true, number: data.display_phone_number || null, name: data.verified_name || null, quality: data.quality_rating || null });
+    } catch (e) {
+      res.json({ ok: false, linked: false, reason: e.message });
+    }
+  });
+  // دعوة عميل: إنشاء حساب بوابة + كلمة مؤقتة + رابط دخول + إرسال واتساب اختياري
+  app.post("/admin/invites", async (req, res) => {
+    const tenantId = req.clientTenant || req.body?.tenantId;
+    const { phone, name, send } = req.body || {};
+    if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
+    const { isTenantActive } = await import("../../../../tenants.mjs");
+    const tenant = await getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    if (!isTenantActive(tenant)) {
+      return res.status(403).json({ ok: false, error: "هذا البوت موقوف أو منتهي التجربة" });
+    }
+    const cryptoMod = await import("node:crypto");
+    const tempPassword = cryptoMod.randomBytes(4).toString("hex"); // 8 خانات
+    const { createClientUser } = await import("../../../../portal.mjs");
+    const { PUBLIC_BASE_URL } = await import("../../../config/env.mjs");
+    let u;
+    try {
+      u = await createClientUser({ tenantId, phone: String(phone).trim(), name: (name || "").trim() || String(phone).trim(), password: tempPassword, allowReset: true });
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: e.message });
+    }
+    const portalUrl = `${(PUBLIC_BASE_URL || "").replace(/\/$/, "")}/portal/?tenant=${encodeURIComponent(tenantId)}`;
+    logEvent("invite_created", { tenantId, phone: u.phone }).catch(() => {});
+    let sent = false;
+    let sendError = null;
+    if (send) {
+      const msg =
+        `أهلاً ${u.name} 👋 تم ربط رقمك مع ${tenant.name} على منصة وصل.\n` +
+        `🔗 رابط الدخول: ${portalUrl}\n` +
+        `🤖 البوت: ${tenantId}\n📱 الجوال: ${u.phone}\n🔑 كلمة مؤقتة: ${tempPassword}\n` +
+        `ادخل وغيّر الكلمة من (نسيت كلمة السر) بعد أول دخول.`;
+      try {
+        await sendWithWindowFallback(String(phone).trim(), msg, tenant);
+        sent = true;
+        logEvent("invite_sent", { tenantId, phone: u.phone }).catch(() => {});
+      } catch (e) {
+        sendError = e.message;
+      }
+    }
+    res.status(201).json({ ok: true, invite: { tenantId, phone: u.phone, name: u.name, tempPassword, portalUrl, sent, sendError } });
+  });
+  app.post("/admin/users", async (req, res) => {
+    try {
+      const { createClientUser } = await import("../../../../portal.mjs");
+      const u = await createClientUser(req.body || {});
+      res.status(201).json({ ok: true, user: { id: u.id, tenantId: u.tenantId, phone: u.phone, name: u.name } });
+    } catch (e) {
+      if (e?.code === "USER_EXISTS") return res.status(409).json({ ok: false, error: e.message });
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+  app.get("/admin/users", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    // User list is SUPER_ONLY per middleware, but double-guard global reads here.
+    if (scope.global && !req.isSuperAdmin) return denyGlobal(res);
+    const { listClientUsers } = await import("../../../../portal.mjs");
+    const rows = await listClientUsers(scope.global ? undefined : scope.tenant);
+    res.json({ count: rows.length, users: rows });
+  });
+  app.get("/admin/tenants/:id", async (req, res) => {
+    if (req.clientTenant && req.params.id !== req.clientTenant) {
+      return res.status(403).json({ ok: false, error: "غير مصرح — هذا البوت ليس لك" });
+    }
+    const t = await getTenantFull(req.params.id);
+    if (!t) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    // إخفاء التوكن (المشفر والمفكوك معاً — لا يغادر الخادم أبداً)
+    const { whatsapp_token, whatsappToken: _enc, ...safe } = t;
+    res.json({ ok: true, tenant: { ...safe, hasToken: !!whatsapp_token, hasOwnToken: !!_enc } });
+  });
+}

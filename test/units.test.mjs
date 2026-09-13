@@ -146,3 +146,49 @@ test("csrfGuard: Origin مخالف يرفض", () => {
   );
   assert.equal(res.code, 403);
 });
+
+// ── adminRateLimit: 20/دقيقة لكل IP ──
+test("adminRateLimit: يسمح بالعشرين الأولى ويحجب الـ 21 بـ 429", async () => {
+  const { adminRateLimit } = await import("../src/web/middleware.mjs");
+  const ip = `test-${Date.now()}-${Math.random()}`;
+  let allowed = 0;
+  let blocked = 0;
+  for (let i = 0; i < 25; i++) {
+    let passed = false;
+    const res = { setHeader() {}, status(c) { this.code = c; return { json: () => {} }; } };
+    adminRateLimit({ ip, path: "/tenants" }, res, () => { passed = true; });
+    if (passed) allowed++;
+    else if (res.code === 429) blocked++;
+  }
+  assert.equal(allowed, 20);
+  assert.ok(blocked >= 5);
+});
+
+// ── JWT: توكن العميل 12 ساعة ──
+test("signClientToken: انتهاء 12h (43200 ثانية)", async () => {
+  process.env.JWT_SECRET = process.env.JWT_SECRET || "unit-test-jwt-secret-1234567890";
+  const { signClientToken } = await import("../portal.mjs");
+  const t = signClientToken({ id: "u1", tenantId: "t1", phone: "p1" });
+  const payload = JSON.parse(Buffer.from(t.split(".")[1], "base64").toString());
+  assert.equal(payload.exp - payload.iat, 12 * 60 * 60);
+});
+
+// ── الطابور: سقف maxQueued يمنع OOM ──
+test("queue: الامتلاء يُسقط مع QUEUE_FULL بدل النمو للأبد", async () => {
+  const q = createQueue({ concurrency: 1, maxQueued: 3 });
+  // اشغل العامل بمهمة معلقة حتى يتراكم pending
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const first = q.run("busy", () => gate);
+  q.enqueue("q1", async () => {});
+  q.enqueue("q2", async () => {});
+  q.enqueue("q3", async () => {});
+  const overflow = q.enqueue("OVERFLOW", async () => {});
+  assert.equal(overflow, -1);
+  await assert.rejects(q.run("X", async () => {}), /الطابور ممتلئ/);
+  release();
+  await first;
+  const s = q.stats();
+  assert.ok(s.dropped >= 1);
+  assert.equal(s.maxQueued, 3);
+});

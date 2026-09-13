@@ -11,6 +11,7 @@ jobs:
     steps:
       - name: Ping Render
         run: |
-          curl -s https://kareem-whatsapp-agent.onrender.com/healthz | head -c 200
-          curl -s https://kareem-whatsapp-agent.onrender.com/ | head -c 200
+          set -o pipefail
+          curl --fail --show-error --max-time 30 https://kareem-whatsapp-agent.onrender.com/healthz | head -c 200; echo
+          curl --fail --show-error --max-time 30 https://kareem-whatsapp-agent.onrender.com/ | head -c 200; echo
           echo "Ping done"

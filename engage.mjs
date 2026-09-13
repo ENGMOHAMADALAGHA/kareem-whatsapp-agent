@@ -59,11 +59,25 @@ export async function saveRating({ tenantId, phone, score, refId }) {
 
 export async function csatStats(tenantId) {
   const T = tenantId ? tenantDb(tenantId) : systemDb("engage:csat");
-  const rows = await T.rating.findMany({
-    select: { score: true },
-  });
-  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  rows.forEach((r) => { if (dist[r.score] !== undefined) dist[r.score]++; });
-  const avg = rows.length ? (rows.reduce((s, r) => s + r.score, 0) / rows.length).toFixed(2) : null;
-  return { count: rows.length, avg: avg ? Number(avg) : null, dist };
+  try {
+    // تجميع في DB بدل تحميل كل الصفوف — آمن مع آلاف التقييمات
+    const [agg, groups] = await Promise.all([
+      T.rating.aggregate({ _count: true, _avg: { score: true } }),
+      T.rating.groupBy({ by: ["score"], _count: true }),
+    ]);
+    const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const g of groups || []) {
+      if (dist[g.score] !== undefined) dist[g.score] = g._count;
+    }
+    const count = agg?._count ?? 0;
+    const avg = agg?._avg?.score ?? null;
+    return { count, avg: avg ? Number(Number(avg).toFixed(2)) : null, dist };
+  } catch {
+    // رجوع آمن عند غياب aggregate في بيئة قديمة
+    const rows = await T.rating.findMany({ select: { score: true }, take: 5000 });
+    const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    rows.forEach((r) => { if (dist[r.score] !== undefined) dist[r.score]++; });
+    const avg = rows.length ? (rows.reduce((s, r) => s + r.score, 0) / rows.length).toFixed(2) : null;
+    return { count: rows.length, avg: avg ? Number(avg) : null, dist };
+  }
 }

@@ -15,7 +15,7 @@ import { PORT, WEBHOOK_VERIFY_TOKEN, WHATSAPP_PHONE_ID, AI_PROVIDER, AI_MODEL, A
 import { listTenants } from "../../tenants.mjs";
 import { isDemoMode } from "../ai/kareem.mjs";
 import { db } from "../../db.mjs";
-import { adminAuth, scopeClient, csrfGuard } from "./middleware.mjs";
+import { adminAuth, adminRateLimit, scopeClient, csrfGuard } from "./middleware.mjs";
 import { replayInflightWebhooks } from "./routes/webhook.mjs";
 import { registerAdminRoutes } from "./routes/admin.mjs";
 import { registerPortalRoutes } from "./routes/portal.mjs";
@@ -52,6 +52,7 @@ export function createApp() {
   app.use(csrfGuard);
   // أصول محلية (Tailwind مُضمّن — لا سكربتات خارجية حية داخل الكونسول)
   app.use("/assets", express.static(path.join(__dirname, "..", "..", "assets")));
+  app.use("/admin", adminRateLimit);
   app.use("/admin", adminAuth);
   app.use("/admin", scopeClient);
 

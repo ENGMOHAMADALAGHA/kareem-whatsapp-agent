@@ -1,0 +1,127 @@
+// راوتر التفاعل: broadcast + report + csat + crm
+import { getTenantFull } from "../../../../tenants.mjs";
+import { normalizePhone } from "../../../utils/phone.mjs";
+import { sendWhatsAppMessage } from "../../../whatsapp/sender.mjs";
+import { pushHistory } from "../../../memory/conversations.mjs";
+import {
+  saveBroadcast,
+  listBroadcasts,
+  requestCsat,
+  csatStats,
+} from "../../../../engage.mjs";
+import { logEvent, listEvents, toCSV } from "../../../../crm.mjs";
+import { fmtMoney } from "../../../../orders.mjs";
+import { resolveScope, denyGlobal } from "./scope.mjs";
+
+export function registerEngageRoutes(app) {
+  app.post("/admin/broadcast", async (req, res) => {
+    const { tenantId, text, phones } = req.body || {};
+    if (!tenantId || !text || !Array.isArray(phones) || !phones.length) {
+      return res.status(400).json({ ok: false, error: "tenantId و text و phones[] مطلوبة" });
+    }
+    if (phones.length > 50) return res.status(400).json({ ok: false, error: "الحد الأقصى 50 رقم لكل بث" });
+    // توحيد كل الأرقام E.164 — أي صيغة (079/00962/+) تعمل
+    const normPhones = [...new Set(phones.map((p) => normalizePhone(p)).filter(Boolean))];
+    const tenant = await getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const { isTenantActive } = await import("../../../../tenants.mjs");
+    if (!isTenantActive(tenant)) {
+      return res.status(403).json({ ok: false, error: tenant.enabled === false ? "هذا البوت موقوف" : "الفترة التجريبية لهذا البوت انتهت — جدد الخطة" });
+    }
+    // امتثال: استبعاد من ألغوا الاشتراك قبل الإرسال
+    const { isOptedOut } = await import("../../../compliance/messaging.mjs");
+    const eligible = [];
+    const skippedOptOut = [];
+    for (const phone of normPhones) {
+      if (await isOptedOut(tenantId, phone)) skippedOptOut.push(phone);
+      else eligible.push(phone);
+    }
+    const results = [];
+    for (const phone of eligible) {
+      try {
+        await sendWhatsAppMessage(phone, text, tenant);
+        await pushHistory(phone, "assistant", text, tenant);
+        results.push({ phone, ok: true });
+      } catch (e) {
+        results.push({ phone, ok: false, error: e.message });
+      }
+      await new Promise((r) => setTimeout(r, 800)); // تجنب rate limit
+    }
+    const rec = await saveBroadcast({ tenantId, text, phones: normPhones, results });
+    logEvent("broadcast", { tenantId, count: normPhones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id, skippedOptOut: skippedOptOut.length }).catch(() => {});
+    res.json({ ok: true, broadcast: rec, skippedOptOut });
+  });
+  app.get("/admin/broadcasts", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    if (scope.global && !req.isSuperAdmin) return denyGlobal(res);
+    const all = await listBroadcasts(scope.global ? undefined : scope.tenant);
+    res.json({ count: all.length, broadcasts: all });
+  });
+  app.get("/admin/report", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const tenantId = scope.global ? undefined : scope.tenant;
+    const days = Number(req.query.days || 30);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const { tenantDb, systemDb } = await import("../../../security/tenantGuard.mjs");
+    const T = tenantId ? tenantDb(tenantId) : systemDb("report:global");
+    const where = { createdAt: { gte: since } };
+    const [msgs, orders, bookings, ratings, broadcasts] = await Promise.all([
+      T.message.count({ where }),
+      T.order.findMany({ where, select: { total: true, status: true } }),
+      T.appointment.count({ where }),
+      T.rating.findMany({ where, select: { score: true } }),
+      T.broadcast.count({ where }),
+    ]);
+    const revenue = orders.filter((o) => o.status === "paid").reduce((s, o) => s + Number(o.total), 0);
+    const avgCsat = ratings.length ? Number((ratings.reduce((s, r) => s + r.score, 0) / ratings.length).toFixed(2)) : null;
+    const staffHoursSaved = Number(((msgs * 3) / 60).toFixed(1)); // 3 دقائق لكل رد آلي
+    res.json({
+      ok: true, tenant: tenantId || "all", days,
+      messagesHandled: msgs,
+      orders: { count: orders.length, paid: orders.filter((o) => o.status === "paid").length, revenue },
+      bookings: bookings,
+      csat: { avg: avgCsat, count: ratings.length },
+      broadcasts,
+      staffHoursSaved,
+      message: `البوت رد على ${msgs} رسالة (~${staffHoursSaved} ساعة موظفين)، وحقق ${fmtMoney(revenue, "JOD")} مدفوعات، بتقييم ${avgCsat || "—"}/5`,
+    });
+  });
+  app.post("/admin/csat-request", async (req, res) => {
+    const { tenantId, phone } = req.body || {};
+    if (!tenantId || !phone) return res.status(400).json({ ok: false, error: "tenantId و phone مطلوبان" });
+    const tenant = await getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const msg = `شكراً لتعاملك معنا يا غالي! 🙏 قيّم تجربتك من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
+    await requestCsat(tenantId, phone, null);
+    try {
+      await sendWhatsAppMessage(phone, msg, tenant);
+      await pushHistory(phone, "assistant", msg, tenant);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  app.get("/admin/csat", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    res.json({ ok: true, ...(await csatStats(scope.global ? undefined : scope.tenant)) });
+  });
+  app.get("/admin/crm", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const { type, limit } = req.query;
+    const events = await listEvents({ tenantId: scope.global ? undefined : scope.tenant, type, limit: Number(limit || 100) });
+    res.json({ count: events.length, events });
+  });
+  app.get("/admin/crm/export.csv", async (req, res) => {
+    const scope = resolveScope(req, req.query.tenant);
+    if (scope.denied) return denyGlobal(res);
+    const { type } = req.query;
+    const events = await listEvents({ tenantId: scope.global ? undefined : scope.tenant, type, limit: 2000 });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=crm.csv");
+    res.send("\uFEFF" + toCSV(events));
+  });
+}

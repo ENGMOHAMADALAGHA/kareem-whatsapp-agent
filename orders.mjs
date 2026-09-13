@@ -189,10 +189,15 @@ export async function markOrderReview(id, tenantId, review) {
 export async function rejectOrder(id, tenantId, { reason, by }) {
   if (!reason || !String(reason).trim()) throw new Error("سبب الرفض مطلوب");
   const T = tenantDb(tenantId);
-  const current = await T.order.findFirst({ where: { id } }).catch(() => null);
-  if (!current) return null;
-  const proof = { ...(current.proof || {}), review: { by: by || "acp", reason: String(reason).trim(), at: new Date().toISOString() } };
-  const row = await T.order.update({ where: { id }, data: { proof, status: "rejected" } }).catch(() => null);
+  const proof = { review: { by: by || "acp", reason: String(reason).trim(), at: new Date().toISOString() } };
+  // ذري: updateMany بشرط status يمنع رفض طلب مدفوع/ملغي بين القراءة والكتابة.
+  // ملاحظة: proof يُستبدل هنا (لا دمج مع القديم) لتفادي سباق قراءة-تعديل-كتابة.
+  const r = await T.order.updateMany({
+    where: { id, status: { in: ["pending", "proof_received", "pending_review"] } },
+    data: { proof, status: "rejected" },
+  }).catch(() => ({ count: 0 }));
+  if (!r?.count) return null;
+  const row = await T.order.findUnique({ where: { id } }).catch(() => null);
   return rowToOrder(row);
 }
 

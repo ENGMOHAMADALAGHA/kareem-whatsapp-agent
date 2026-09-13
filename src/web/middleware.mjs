@@ -1,6 +1,19 @@
 import crypto from "node:crypto";
 import { ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
+import { checkLimit } from "../security/rateLimit.mjs";
 import { getTenantFull } from "../../tenants.mjs";
+
+// ── حماية تخمين /admin: 20 محاولة/دقيقة لكل IP (Basic Auth) ──
+// يركّب قبل adminAuth في app.mjs حتى لا يُستنزف التحقق بالتخمين.
+export function adminRateLimit(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const lim = checkLimit(`admin:${ip}`, 20, 60 * 1000);
+  if (!lim.allowed) {
+    res.setHeader("Retry-After", String(lim.retryAfter));
+    return res.status(429).json({ ok: false, error: `محاولات كثيرة — حاول بعد ${lim.retryAfter} ثانية` });
+  }
+  next();
+}
 
 // ── حماية /admin: سوبر أدمن (Basic) أو عميل (JWT) ──
 // مسارات ممنوعة على العملاء (إدارة البوتات والمستخدمين فقط للسوبر)

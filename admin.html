@@ -648,7 +648,11 @@ async function loadTenants() {
     try {
       const me = JSON.parse(atob(portalToken.split(".")[1]));
       cur.tenant = me.tenantId;
-      $("tenantSel").innerHTML = "<option>" + me.tenantId + "</option>";
+      const sel0 = $("tenantSel");
+      sel0.innerHTML = "";
+      const o0 = document.createElement("option");
+      o0.textContent = me.tenantId;
+      sel0.appendChild(o0);
       $("tenantSel").disabled = true;
       return;
     } catch (e) { showLogin(); return; }

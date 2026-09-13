@@ -73,33 +73,24 @@ function wrapModel(delegate, model, tenantId) {
       }
       if (op === "delete") {
         return async (args = {}) => {
-          const before = await target.findUnique({ where: args.where }).catch(() => null);
-          if (!before || before.tenantId !== tenantId) {
-            const e = new Error("السجل غير موجود في نطاقك");
-            e.code = "TENANT_DENIED";
-            throw e;
-          }
+          // ذري: حذف مشروط واحد — بلا قراءة مسبقة (لا TOCTOU).
+          // نعيد null عند عدم التطابق بدل كشف وجود سجل خارج النطاق.
           const del = await target
             .deleteMany({ where: { ...args.where, tenantId } })
             .catch(() => ({ count: 0 }));
-          if (!del?.count) {
-            const e = new Error("السجل غير موجود في نطاقك");
-            e.code = "TENANT_DENIED";
-            throw e;
-          }
-          return before;
+          if (!del?.count) return null;
+          return { deleted: true, count: del.count };
         };
       }
       if (op === "upsert") {
         return async (args = {}) => {
-          const existing = await target.findUnique({ where: args.where }).catch(() => null);
-          if (existing && existing.tenantId !== tenantId) {
-            const e = new Error("السجل غير موجود في نطاقك");
-            e.code = "TENANT_DENIED";
-            throw e;
-          }
+          // upsert ذري بالنطاق: where + update مسكوبان بـ tenantId —
+          // لا يمكن خطف سجل من نطاق آخر عبر where مكرر.
+          const scoped = { ...(args.where || {}), tenantId };
           return fn.call(target, {
             ...args,
+            where: scoped,
+            update: { ...(args.update || {}), tenantId },
             create: scopedData(tenantId, args.create),
           });
         };

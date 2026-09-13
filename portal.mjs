@@ -24,7 +24,7 @@ export async function getClientUser(tenantId, phone) {
 export async function createClientUser({ tenantId, name, phone, password, allowReset = false }) {
   if (!tenantId || !phone || !password) throw new Error("tenantId و phone و password مطلوبة");
   phone = normalizePhone(phone);
-  if (String(password).length < 6) throw new Error("كلمة السر 6 أحرف على الأقل");
+  if (String(password).length < 8) throw new Error("كلمة السر 8 أحرف على الأقل");
   if (!allowReset) {
     const existing = await getClientUser(tenantId, phone);
     if (existing) {
@@ -62,7 +62,7 @@ export function signClientToken(user) {
   return jwt.sign(
     { sub: user.id, tenantId: user.tenantId, phone: user.phone, role: "client" },
     secret(),
-    { expiresIn: "30d" }
+    { expiresIn: "12h" }
   );
 }
 
@@ -108,7 +108,7 @@ export async function startPasswordReset(tenantId, phone, sendFn) {
 export async function finishPasswordReset(tenantId, phone, code, newPassword) {
   if (!tenantId || !phone) throw new Error("بيانات ناقصة");
   phone = normalizePhone(phone);
-  if (!newPassword || String(newPassword).length < 6) throw new Error("كلمة السر 6 أحرف على الأقل");
+  if (!newPassword || String(newPassword).length < 8) throw new Error("كلمة السر 8 أحرف على الأقل");
   const u = await tenantDb(tenantId).tenantUser.findUnique({
     where: { tenantId_phone: { tenantId, phone } },
   });

@@ -4,6 +4,19 @@ const db = () => systemDb("store:kv");
 // مخزن حالات مؤقتة دائم (Takeover/حجز/CSAT) — بديل Maps الطائرة
 // كاش ذاكرة للسرعة + Postgres للبقاء بعد restart
 const cache = new Map();
+const CACHE_MAX = Number(process.env.STORE_CACHE_MAX || 2000);
+
+function pruneCache() {
+  if (cache.size <= CACHE_MAX) return;
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (v.expiresAt && v.expiresAt < now) cache.delete(k);
+  }
+  for (const k of cache.keys()) {
+    if (cache.size <= CACHE_MAX) break;
+    cache.delete(k);
+  }
+}
 
 function expired(entry) {
   return entry.expiresAt && entry.expiresAt < Date.now();
@@ -33,6 +46,7 @@ export async function storeGet(key) {
 export async function storeSet(key, value, ttlMs = null) {
   const expiresAt = ttlMs ? new Date(Date.now() + ttlMs) : null;
   cache.set(key, { value, expiresAt: expiresAt ? expiresAt.getTime() : null });
+  pruneCache();
   try {
     await db().kvStore.upsert({
       where: { key },

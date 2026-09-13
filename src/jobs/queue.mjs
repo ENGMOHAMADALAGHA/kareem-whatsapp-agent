@@ -5,11 +5,28 @@
 // ──────────────────────────────────────────────
 import { VOICE_QUEUE_CONCURRENCY } from "../config/env.mjs";
 
-export function createQueue({ concurrency = 5, retries = 2, timeoutMs = 60000, onDead = null } = {}) {
+export function createQueue({ concurrency = 5, retries = 2, timeoutMs = 60000, onDead = null, maxQueued = Number(process.env.QUEUE_MAX_QUEUED || 500) } = {}) {
   const pending = [];
   let running = 0;
   let done = 0;
   let dead = 0;
+  let dropped = 0;
+
+  function isFull() {
+    return pending.length >= maxQueued;
+  }
+
+  function dropOverflow(label) {
+    dropped++;
+    dead++;
+    const err = new Error(`الطابور ممتلئ (${pending.length}/${maxQueued}) — أُسقطت [${label}] لمنع OOM`);
+    console.error(`  ☠️ ${err.message}`);
+    try {
+      const r = onDead?.({ label, at: Date.now(), attempts: 0 }, err);
+      if (r?.catch) r.catch(() => {});
+    } catch { /* لا تكسر المسار الساخن */ }
+    return err;
+  }
 
   async function pump() {
     if (running >= concurrency) return;
@@ -56,6 +73,12 @@ export function createQueue({ concurrency = 5, retries = 2, timeoutMs = 60000, o
   // شغّل مهمة وانتظر نتيجتها (للاستخدام داخل معالج آخر، مثل طابور الفويس)
   function runJob(label, fn) {
     return new Promise((resolve, reject) => {
+      if (isFull()) {
+        const err = dropOverflow(label);
+        err.code = "QUEUE_FULL";
+        reject(err);
+        return;
+      }
       pending.push({
         label, fn, attempts: 0, at: Date.now(),
         done: resolve, fail: reject,
@@ -80,6 +103,10 @@ export function createQueue({ concurrency = 5, retries = 2, timeoutMs = 60000, o
 
   return {
     enqueue(label, fn) {
+      if (isFull()) {
+        dropOverflow(label);
+        return -1;
+      }
       pending.push({ label, fn, attempts: 0, at: Date.now() });
       setImmediate(pump);
       return pending.length;
@@ -87,7 +114,7 @@ export function createQueue({ concurrency = 5, retries = 2, timeoutMs = 60000, o
     enqueueOrdered,
     run: runJob,
     stats() {
-      return { queued: pending.length, running, done, dead, concurrency, retries, backend: "memory" };
+      return { queued: pending.length, running, done, dead, dropped, concurrency, retries, maxQueued, backend: "memory" };
     },
   };
 }

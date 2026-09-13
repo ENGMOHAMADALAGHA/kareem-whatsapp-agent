@@ -19,7 +19,8 @@
     "db:push": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
     "db:sql": "node scripts/db-schema.mjs",
     "db:init": "node scripts/db-init.mjs",
-    "db:to-neon": "node scripts/migrate-neon.mjs"
+    "db:to-neon": "node scripts/migrate-neon.mjs",
+    "backup": "node scripts/backup.mjs"
   },
   "keywords": [
     "whatsapp",
@@ -39,6 +40,7 @@
       "*.mjs",
       "!_tmp*",
       "admin.html",
+      "client.html",
       "prisma/**/*",
       "src/**/*",
       "assets/**/*",

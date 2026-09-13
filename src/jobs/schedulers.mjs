@@ -8,9 +8,15 @@ import { REMIND_EVERY_MS, REMIND_AFTER_MIN, CART_AFTER_MIN } from "../config/env
 
 export function startSchedulers() {
   // مجدول تلقائي: تذكير مواعيد + سلة مهجورة
-  
+  // قفل تداخل: لو طالت دورة عن REMIND_EVERY_MS لا تبدأ دورة فوقها (تهدر اتصالات limit=1)
+  let remindRunning = false;
   if (!global.__remindTimer) {
     global.__remindTimer = setInterval(async () => {
+      if (remindRunning) {
+        console.warn("  ⏭️ دورة تذكير سابقة ما زالت تعمل — تخطي هذه الدورة لمنع التداخل");
+        return;
+      }
+      remindRunning = true;
       try {
 // 1) تذكير مواعيد
         const due = await dueReminders({ afterMinutes: REMIND_AFTER_MIN });
@@ -77,6 +83,8 @@ export function startSchedulers() {
         }
       } catch (e) {
         console.error(`  ❌ خطأ المجدول: ${e.message}`);
+      } finally {
+        remindRunning = false;
       }
     }, REMIND_EVERY_MS);
     if (global.__remindTimer.unref) global.__remindTimer.unref();

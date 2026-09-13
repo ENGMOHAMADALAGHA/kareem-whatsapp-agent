@@ -219,13 +219,16 @@ export async function isSlotTaken(tenantId, day, slot, capacity) {
   return (await countSlotBookings(tenantId, day, slot)) >= 1;
 }
 
-// أقرب الأوقات الفارغة لنفس اليوم
+// أقرب الأوقات الفارغة لنفس اليوم — استعلام واحد بدل N+1
 export async function freeSlots(tenantId, day, allSlots) {
-  const free = [];
-  for (const s of allSlots || []) {
-    if (!(await isSlotTaken(tenantId, day, s))) free.push(s);
-  }
-  return free;
+  const slots = allSlots || [];
+  if (!slots.length) return [];
+  const taken = await tenantDb(tenantId).appointment.findMany({
+    where: { day, slot: { in: slots }, status: "confirmed" },
+    select: { slot: true },
+  });
+  const takenSet = new Set((taken || []).map((r) => r.slot));
+  return slots.filter((s) => !takenSet.has(s));
 }
 
 // قائمة الانتظار: حجوزات بحالة waiting (تُعبأ تلقائياً عند الإلغاء)
