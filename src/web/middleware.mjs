@@ -3,9 +3,13 @@ import { ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
 import { checkLimit } from "../security/rateLimit.mjs";
 import { getTenantFull } from "../../tenants.mjs";
 
-// ── حماية تخمين /admin: 20 محاولة/دقيقة لكل IP (Basic Auth) ──
+// ── حماية تخمين /admin: 20 محاولة/دقيقة لكل IP (Basic Auth فقط) ──
 // يركّب قبل adminAuth في app.mjs حتى لا يُستنزف التحقق بالتخمين.
+// حاملو JWT (بوابات العملاء) معفيون: التوكن 256-bit لا يُخمَّن، والبوابة
+// تطلق رشقات شرعية عند التنقل بين التبويبات (حجوزات+طلبات+محادثات معاً).
 export function adminRateLimit(req, res, next) {
+  const header = req.headers?.authorization || "";
+  if (header.startsWith("Bearer ")) return next();
   const ip = req.ip || req.socket?.remoteAddress || "unknown";
   const lim = checkLimit(`admin:${ip}`, 20, 60 * 1000);
   if (!lim.allowed) {

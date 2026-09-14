@@ -15,9 +15,24 @@
   .msg-a { background: #f1f5f9; margin-inline-end: auto; }
   .field { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .55rem .7rem; font-size: .875rem; }
   .field:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px #bfdbfe; }
-  .btn-p { background: linear-gradient(135deg,#2563eb,#1e40af); color: #fff; font-weight: 700; border-radius: .7rem; padding: .6rem 1.2rem; }
-  .btn-g { background: linear-gradient(135deg,#059669,#065f46); color: #fff; font-weight: 700; border-radius: .7rem; padding: .45rem 1rem; font-size: .8rem; }
-  .btn-s { background: #f1f5f9; font-weight: 700; border-radius: .7rem; padding: .45rem 1rem; font-size: .8rem; }
+  .btn-p { background: linear-gradient(135deg,#7c3aed,#4c1d95); color: #fff; font-weight: 700; border-radius: .7rem; padding: .6rem 1.2rem; }
+  .btn-g { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; font-weight: 700; border-radius: .7rem; padding: .45rem 1rem; font-size: .8rem; }
+  .btn-s { background: #fff; border: 1px solid #e2e8f0; color: #334155; font-weight: 700; border-radius: .7rem; padding: .45rem 1rem; font-size: .8rem; }
+  .tabbtn.on { background: linear-gradient(135deg,#7c3aed,#4c1d95); color: #fff; }
+  /* ── Wasl unified theme ── */
+  .wtoolbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: .9rem; padding: .55rem .7rem; margin-bottom: .6rem; }
+  .wtoolbar .wtitle { font-weight: 800; font-size: .9rem; margin-inline-end: auto; }
+  .wbtn { display: inline-flex; align-items: center; gap: .3rem; font-size: .78rem; font-weight: 700; padding: .5rem .9rem; border-radius: .7rem; border: 1px solid transparent; cursor: pointer; white-space: nowrap; }
+  .wbtn-p { background: linear-gradient(135deg,#7c3aed,#4c1d95); color: #fff; box-shadow: 0 6px 14px -6px rgba(124,58,237,.6); }
+  .wbtn-s { background: #fff; color: #334155; border-color: #e2e8f0; }
+  .wbtn-ok { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+  table.wtable { width: 100%; font-size: .85rem; border-collapse: collapse; }
+  table.wtable thead th { background: #f1f5f9; color: #475569; font-size: .75rem; font-weight: 800; padding: .6rem .5rem; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
+  table.wtable tbody td { padding: .6rem .5rem; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  table.wtable tbody tr:hover { background: #faf5ff; }
+  table.wtable tbody tr:last-child td { border-bottom: none; }
+  /* أيقونة البوابة بهوية وصل */
+  .wasl-mark { background: linear-gradient(135deg,#7c3aed,#4c1d95) !important; }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } }
   .fade { animation: fadeUp .25s ease; }
 </style>
@@ -27,7 +42,7 @@
 
   <!-- ترويسة العميل -->
   <header class="card p-4 mb-4 flex items-center gap-3">
-    <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl text-white" style="background:linear-gradient(135deg,#2563eb,#1e1b4b)">🤖</div>
+    <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl text-white wasl-mark">🤖</div>
     <div class="flex-1">
       <h1 class="font-extrabold text-lg" id="botTitle">بوابة العميل</h1>
       <p class="text-xs text-slate-500">مدعوم من <b>وصل Wasl</b> Command Center</p>
@@ -46,7 +61,7 @@
     <div id="forgotBox" class="hidden space-y-2 border-t pt-2">
       <button id="forgotSend" class="btn-s w-full">إرسال رمز واتساب</button>
       <input id="forgotCode" class="field" placeholder="الرمز المستلم" dir="ltr">
-      <input id="forgotNew" type="password" class="field" placeholder="كلمة جديدة (6 أحرف+)">
+      <input id="forgotNew" type="password" class="field" placeholder="كلمة جديدة (8 أحرف+)">
       <button id="forgotDo" class="btn-p w-full">تعيين الكلمة</button>
     </div>
     <div id="liMsg" class="text-xs text-red-500 text-center"></div>
@@ -80,19 +95,19 @@
     </div>
     <div id="pane-orders" class="hidden card p-3"><h3 class="font-bold mb-2">الطلبات</h3><div id="cOrders" class="space-y-2"></div></div>
     <div id="pane-booking" class="hidden card p-3">
-      <div class="flex items-center gap-2 mb-2 flex-wrap">
-        <h3 class="font-bold">الحجوزات</h3>
-        <button id="cBkAdd" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#2563eb,#1e40af)">＋ حجز يدوي</button>
-        <input id="cBkFrom" type="text" inputmode="numeric" maxlength="10" placeholder="2026-01-01" title="من تاريخ (سنة-شهر-يوم)" class="border rounded p-1 text-xs" style="width:7.5rem">
-        <input id="cBkTo" type="text" inputmode="numeric" maxlength="10" placeholder="2026-12-31" title="إلى تاريخ (سنة-شهر-يوم)" class="border rounded p-1 text-xs" style="width:7.5rem">
-        <button id="cBkExport" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#059669,#065f46)">📥 تصدير Excel</button>
-        <button id="cBkRemindAll" class="text-xs px-2 py-1 rounded text-white font-bold" style="background:linear-gradient(135deg,#7c3aed,#4c1d95)">⏰ تشغيل التذكير</button>
-        <button id="cBkRefresh" class="text-xs px-2 py-1 rounded bg-slate-200 font-bold">↻ تحديث</button>
+    <div class="wtoolbar">
+        <span class="wtitle">📅 الحجوزات</span>
+        <button id="cBkAdd" class="wbtn wbtn-p">＋ حجز يدوي</button>
+        <input id="cBkFrom" type="text" inputmode="numeric" maxlength="10" placeholder="2026-01-01" title="من تاريخ (سنة-شهر-يوم)" class="field text-xs" style="width:7.5rem;padding:.5rem .6rem">
+        <input id="cBkTo" type="text" inputmode="numeric" maxlength="10" placeholder="2026-12-31" title="إلى تاريخ (سنة-شهر-يوم)" class="field text-xs" style="width:7.5rem;padding:.5rem .6rem">
+        <button id="cBkExport" class="wbtn wbtn-ok">📥 تصدير Excel</button>
+        <button id="cBkRemindAll" class="wbtn wbtn-s">⏰ تشغيل التذكير</button>
+        <button id="cBkRefresh" class="wbtn wbtn-s">↻ تحديث</button>
       </div>
       <div class="overflow-auto">
-        <table class="w-full text-sm">
-          <thead><tr class="bg-slate-100 text-xs">
-            <th class="border p-2">رقم الحجز</th><th class="border p-2">العميل</th><th class="border p-2">الهاتف</th><th class="border p-2">الخدمة</th><th class="border p-2">التاريخ والوقت</th><th class="border p-2">الحالة</th><th class="border p-2">إجراءات</th>
+        <table class="wtable">
+          <thead><tr>
+            <th>رقم الحجز</th><th>العميل</th><th>الهاتف</th><th>الخدمة</th><th>التاريخ والوقت</th><th>الحالة</th><th>إجراءات</th>
           </tr></thead>
           <tbody id="cBookingBody"></tbody>
         </table>

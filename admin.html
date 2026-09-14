@@ -118,6 +118,49 @@
   }
   @keyframes shimmer { to { background-position: -200% 0; } }
 
+  /* ── Wasl unified theme: بنفسجي واحد أساسي + محايد للثانوي ── */
+  :root {
+    --wasl-p1: #7c3aed; --wasl-p2: #4c1d95;
+    --wasl-grad: linear-gradient(135deg, #7c3aed, #4c1d95);
+    --wasl-soft: #f1f5f9; --wasl-line: #e2e8f0;
+  }
+  .side-nav.side-active {
+    background: var(--wasl-grad);
+    border-color: rgba(196,181,253,.4);
+    box-shadow: 0 8px 18px -6px rgba(124, 58, 237, .55);
+  }
+  .brand-mark { background: var(--wasl-grad); box-shadow: 0 6px 16px -4px rgba(124,58,237,.6); }
+  .tab-btn.active { background: var(--wasl-p1); color: #fff; }
+  .wtoolbar {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    background: #fff; border: 1px solid var(--wasl-line); border-radius: 1rem;
+    padding: .6rem .8rem; margin-bottom: .7rem; box-shadow: var(--saas-shadow);
+  }
+  .wtoolbar .wtitle { font-weight: 800; font-size: .95rem; margin-inline-end: auto; display: flex; align-items: center; gap: .4rem; }
+  .wbtn {
+    display: inline-flex; align-items: center; gap: .3rem;
+    font-size: .78rem; font-weight: 700; padding: .5rem .9rem; border-radius: .7rem;
+    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+    transition: filter .15s ease, transform .1s ease, box-shadow .15s ease;
+  }
+  .wbtn:hover { filter: brightness(.95); }
+  .wbtn:active { transform: scale(.97); }
+  .wbtn-p { background: var(--wasl-grad); color: #fff; box-shadow: 0 6px 14px -6px rgba(124,58,237,.6); }
+  .wbtn-s { background: #fff; color: #334155; border-color: var(--wasl-line); }
+  .wbtn-s:hover { background: #f8fafc; }
+  .wbtn-ok { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+  .wbtn-ok:hover { background: #d1fae5; }
+  .wbtn-warn { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+  table.wtable { width: 100%; font-size: .85rem; border-collapse: collapse; }
+  table.wtable thead th {
+    background: #f1f5f9; color: #475569; font-size: .75rem; font-weight: 800;
+    padding: .6rem .5rem; border-bottom: 2px solid var(--wasl-line); white-space: nowrap;
+  }
+  table.wtable tbody td { padding: .6rem .5rem; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  table.wtable tbody tr:hover { background: #faf5ff; }
+  table.wtable tbody tr:last-child td { border-bottom: none; }
+  .wempty { text-align: center; color: #94a3b8; padding: 1.4rem; font-size: .85rem; }
+
   /* ── Desktop console shell: left sidebar + workspace canvas ── */
   .desk { display: flex; min-height: 100vh; direction: ltr; }
   .side {
@@ -205,7 +248,7 @@
     <header class="topbar">
       <div class="page-title" id="pageTitle">المحادثات</div>
       <span id="deskChip" class="desk-chip hidden">🖥 تطبيق سطح المكتب</span>
-      <button id="previewBtn" class="text-xs px-3 py-1.5 rounded-lg text-white font-bold" style="background:linear-gradient(135deg,#7c3aed,#4c1d95)">👁 منظور العميل</button>
+      <button id="previewBtn" class="wbtn wbtn-p">👁 منظور العميل</button>
       <select id="tenantSel" class="mr-auto border rounded-lg p-2 text-sm bg-white"></select>
     </header>
 
@@ -234,7 +277,7 @@
       <div id="convMsgs" class="flex-1 space-y-2 max-h-[50vh] overflow-auto mb-2"></div>
       <div class="flex gap-2">
         <input id="replyInput" class="flex-1 border rounded p-2" placeholder="رد الموظف...">
-        <button id="replyBtn" class="px-4 py-2 rounded bg-blue-600 text-white">إرسال</button>
+        <button id="replyBtn" class="wbtn wbtn-p">إرسال</button>
       </div>
     </div>
   </div>
@@ -247,19 +290,19 @@
 
   <!-- Booking -->
   <div id="tab-booking" class="hidden bg-white rounded shadow p-3">
-    <div class="flex items-center gap-2 mb-2 flex-wrap">
-      <h3 class="font-bold">📅 الحجوزات</h3>
-      <button id="bkAdd" class="text-xs px-2 py-1 rounded bg-blue-600 text-white font-bold">＋ حجز يدوي</button>
-      <input id="bkFrom" type="text" inputmode="numeric" maxlength="10" placeholder="2026-01-01" title="من تاريخ (سنة-شهر-يوم)" class="border rounded p-1 text-xs" style="width:7.5rem">
-      <input id="bkTo" type="text" inputmode="numeric" maxlength="10" placeholder="2026-12-31" title="إلى تاريخ (سنة-شهر-يوم)" class="border rounded p-1 text-xs" style="width:7.5rem">
-      <button id="bkExport" class="text-xs px-2 py-1 rounded bg-green-600 text-white font-bold">📥 تصدير Excel (CSV)</button>
-      <button id="remindBtn" class="px-3 py-1 rounded bg-violet-600 text-white text-sm">⏰ تشغيل التذكير</button>
-      <button id="bkRefresh" class="px-2 py-1 rounded bg-slate-200 text-xs font-bold">↻ تحديث</button>
+    <div class="wtoolbar">
+      <span class="wtitle">📅 الحجوزات</span>
+      <button id="bkAdd" class="wbtn wbtn-p">＋ حجز يدوي</button>
+      <input id="bkFrom" type="text" inputmode="numeric" maxlength="10" placeholder="2026-01-01" title="من تاريخ (سنة-شهر-يوم)" class="field text-xs" style="width:7.5rem;padding:.5rem .6rem">
+      <input id="bkTo" type="text" inputmode="numeric" maxlength="10" placeholder="2026-12-31" title="إلى تاريخ (سنة-شهر-يوم)" class="field text-xs" style="width:7.5rem;padding:.5rem .6rem">
+      <button id="bkExport" class="wbtn wbtn-ok">📥 تصدير Excel</button>
+      <button id="remindBtn" class="wbtn wbtn-s">⏰ تشغيل التذكير</button>
+      <button id="bkRefresh" class="wbtn wbtn-s">↻ تحديث</button>
     </div>
     <div class="overflow-auto">
-      <table class="w-full text-sm" id="bookingTable">
-        <thead><tr class="bg-slate-100 text-xs">
-          <th class="border p-2">رقم الحجز</th><th class="border p-2">العميل</th><th class="border p-2">الهاتف</th><th class="border p-2">الخدمة</th><th class="border p-2">التاريخ والوقت</th><th class="border p-2">الحالة</th><th class="border p-2">إجراءات</th>
+      <table class="wtable" id="bookingTable">
+        <thead><tr>
+          <th>رقم الحجز</th><th>العميل</th><th>الهاتف</th><th>الخدمة</th><th>التاريخ والوقت</th><th>الحالة</th><th>إجراءات</th>
         </tr></thead>
         <tbody id="bookingBody"></tbody>
       </table>

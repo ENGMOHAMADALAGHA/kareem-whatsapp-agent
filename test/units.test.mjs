@@ -148,8 +148,14 @@ test("csrfGuard: Origin مخالف يرفض", () => {
 });
 
 // ── adminRateLimit: 20/دقيقة لكل IP ──
-test("adminRateLimit: يسمح بالعشرين الأولى ويحجب الـ 21 بـ 429", async () => {
+test("adminRateLimit: حامل JWT معفي (رشقات البوابة) وغيره 20 ثم 429", async () => {
   const { adminRateLimit } = await import("../src/web/middleware.mjs");
+  // Bearer يمر دائماً بلا عد
+  let passed = 0;
+  for (let i = 0; i < 25; i++) {
+    adminRateLimit({ ip: "9.9.9.9", headers: { authorization: "Bearer jwt.jwt.jwt" } }, { setHeader() {}, status(c) { this.code = c; return { json: () => {} }; } }, () => passed++);
+  }
+  assert.equal(passed, 25);
   const ip = `test-${Date.now()}-${Math.random()}`;
   let allowed = 0;
   let blocked = 0;
