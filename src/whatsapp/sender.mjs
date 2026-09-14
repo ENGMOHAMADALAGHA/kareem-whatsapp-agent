@@ -162,15 +162,12 @@ export async function sendTemplate(to, templateName, params = [], tenantInput = 
   }, tenantInput);
 }
 
-// أزرار افتراضية لكل tenant من منتجاته
+// أزرار افتراضية لكل tenant: من features.quickButtons إن عرّفها البوت، وإلا من منتجاته
+// (لا أزرار مكتوبة لأي بوت بالكود — كل بوت يعرّف أزراره ببياناته)
 export async function defaultButtonsFor(tenant) {
   const t = await resolveTenantInput(tenant);
-  if (t?.id === "kareem-sport") {
-    return [
-      { id: "buy_shoes", title: "👟 الحذاء 50 د.أ" },
-      { id: "buy_belt", title: "💪 الحزام 20 د.أ" },
-      { id: "bundle", title: "🎁 العرض 70 د.أ" },
-    ];
+  if (Array.isArray(t?.features?.quickButtons) && t.features.quickButtons.length) {
+    return t.features.quickButtons.slice(0, 3);
   }
   const btns = (t.products || []).slice(0, 2).map((p) => ({
     id: p.buttonId || p.name,

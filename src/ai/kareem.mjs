@@ -191,13 +191,14 @@ function fallbackReplyFor(tenant, userMessage) {
 // ───────────────
 export async function getKareemReply(userMessage, phone = "default", tenantInput = null) {
   const tenant = await resolveTenantInput(tenantInput);
-  // كريم الحالي يبقى كما هو؛ أي tenant جديد يستخدم prompt مبني من إعداداته
-  const prompt = tenant?.id === "kareem-sport" ? SYSTEM_PROMPT : buildSystemPrompt(tenant);
+  // شخصية المحرك: legacyPrompt اختيارية لكل بوت من features (بوت كريم مفعّلها ببياناته) —
+  // أي بوت جديد يستخدم prompt مبني من إعداداته افتراضياً، ولا أفضلية لأي id.
+  const prompt = tenant?.features?.legacyPrompt === true ? SYSTEM_PROMPT : buildSystemPrompt(tenant);
 
   // وضع DEMO بدون استهلاك API - مع ذاكرة بسيطة
   if (isDemoMode) {
     await new Promise((r) => setTimeout(r, 300));
-    const result = tenant?.id === "kareem-sport" ? mockReply(userMessage) : fallbackReplyFor(tenant, userMessage);
+    const result = tenant?.features?.legacyPrompt === true ? mockReply(userMessage) : fallbackReplyFor(tenant, userMessage);
     // حفظ في الذاكرة حتى في وضع DEMO (معزولة لكل بوت)
     await Promise.all([
       pushHistory(phone, "user", userMessage, tenant),
@@ -284,7 +285,7 @@ export async function getKareemReply(userMessage, phone = "default", tenantInput
     return parsed;
   } catch (err) {
     console.warn(`  ⚠️  خطأ في استدعاء API: ${err.message} - الرجوع للمحاكاة المحلية`);
-    const fallback = tenant?.id === "kareem-sport" ? mockReply(userMessage) : fallbackReplyFor(tenant, userMessage);
+    const fallback = tenant?.features?.legacyPrompt === true ? mockReply(userMessage) : fallbackReplyFor(tenant, userMessage);
     await pushHistory(phone, "assistant", fallback.reply, tenant);
     return fallback;
   }

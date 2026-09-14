@@ -660,10 +660,10 @@ async function loadTenants() {
   const j = await api("/admin/tenants");
   const sel = $("tenantSel");
   sel.innerHTML = "";
-  j.tenants.forEach((t) => {
+  j.tenants.forEach((t, idx) => {
     const o = document.createElement("option");
     o.value = t.id; o.textContent = t.botName + " - " + t.name;
-    if (t.isDefault) o.selected = true;
+    if (idx === 0) o.selected = true;
     sel.appendChild(o);
   });
   cur.tenant = sel.value;

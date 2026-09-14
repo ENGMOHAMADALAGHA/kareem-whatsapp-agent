@@ -129,7 +129,7 @@ DATABASE_URL=postgresql://postgres.<ref>:<pass>@aws-1-<region>.pooler.supabase.c
 - `mockReply(msg)` - محاكاة محلية
 - `getKareemReply(msg, phone, tenant)` / `processCustomerMessage` - AI مع ذاكرة معزولة `tenant::phone` (كاش + Postgres)
 - `sendWhatsAppMessage(to, text, tenant)` + `sendButtons` + `sendImage` - لكل بوت توكنه الخاص
-- `resolveTenant({phoneNumberId / verifyToken})` - مطابقة صريحة أولاً ثم كريم الافتراضي (async + كاش 60ث)
+- `resolveTenant({phoneNumberId / verifyToken})` - مطابقة صريحة فقط، بلا افتراضي صامت (fail-closed + كاش 60ث)
 - `buildSystemPrompt(tenant)` - Prompt مبني من منتجات كل بوت
 - `downloadWhatsAppMedia` + `transcribeAudio` - فويس (مهلة 15ث + حد 8MB + إعادة محاولة + موديل بديل)
 - `createOrder` + `detectTotal`/`detectItem` - طلبات بلا Stripe ولا `/pay` نهائياً (محافظ/CliQ + إيصال فقط)

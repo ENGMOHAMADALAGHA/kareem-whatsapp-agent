@@ -173,7 +173,17 @@ test("signClientToken: انتهاء 12h (43200 ثانية)", async () => {
   assert.equal(payload.exp - payload.iat, 12 * 60 * 60);
 });
 
-// ── الطابور: سقف maxQueued يمنع OOM ──
+// ── المنصة: لا بوت افتراضي صامت + أزرار من بيانات البوت ──
+test("platform: resolveTenantInput(null) → null (لا افتراضي صامت)", async () => {
+  const { resolveTenantInput } = await import("../tenants.mjs");
+  assert.equal(await resolveTenantInput(null), null);
+  assert.equal(await resolveTenantInput(undefined), null);
+});
+test("platform: defaultButtonsFor من features.quickButtons (لا ids بالكود)", async () => {
+  const { defaultButtonsFor } = await import("../src/whatsapp/sender.mjs");
+  const btns = await defaultButtonsFor({ id: "demo-bot", features: { quickButtons: [{ id: "b1", title: "زر1" }] }, products: [] });
+  assert.deepEqual(btns, [{ id: "b1", title: "زر1" }]);
+});
 test("queue: الامتلاء يُسقط مع QUEUE_FULL بدل النمو للأبد", async () => {
   const q = createQueue({ concurrency: 1, maxQueued: 3 });
   // اشغل العامل بمهمة معلقة حتى يتراكم pending

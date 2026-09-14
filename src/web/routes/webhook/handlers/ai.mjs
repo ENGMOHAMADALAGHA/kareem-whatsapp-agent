@@ -7,23 +7,21 @@ import { tenantCurrency, fmtMoney } from "../../../../../orders.mjs";
 import { logEvent } from "../../../../../crm.mjs";
 import { createOrderWithPayment } from "../helpers.mjs";
 
-// 1) ضغطة زر منتج لكريم: اعرض الصورة + أنشئ الطلب فوراً + تعليمات الدفع
+// 1) ضغطة زر منتج بخرائط البوت نفسه: features.buttonActions = { buttonId: "رسالة تُرسل للذكاء" }
+// أي بوت يعرّف أزراره وأفعالها ببياناته — لا ids مكتوبة بالكود لأي بوت.
 export async function handleProductButtons(ctx) {
   const { from, tenant, name, buttonId } = ctx;
-  if (!(tenant?.id === "kareem-sport" && buttonId && /^(buy_shoes|buy_belt|bundle)$/.test(buttonId))) return false;
-  const map = {
-    buy_shoes: "أريد شراء حذاء الركض",
-    buy_belt: "أريد شراء حزام الظهر",
-    bundle: "أريد حزام الظهر والحذاء معاً",
-  };
-  const result = await processCustomerMessage(map[buttonId], from, tenant);
+  const actions = tenant?.features?.buttonActions || {};
+  if (!buttonId || !actions[buttonId]) return false;
+  const message = actions[buttonId];
+  const result = await processCustomerMessage(message, from, tenant);
   ctx.result = result;
   try {
     if (result.intent === "شراء") {
       // إنشاء طلب + إرفاق تعليمات الدفع بنفس الرسالة (لا حلقة تأكيد ميتة)
-      await createOrderWithPayment(tenant, from, name, map[buttonId], result);
+      await createOrderWithPayment(tenant, from, name, message, result);
     }
-    const prod = buttonId === "buy_shoes" ? tenant.products[0] : buttonId === "buy_belt" ? tenant.products[1] : null;
+    const prod = (tenant.products || []).find((p) => p.buttonId === buttonId) || null;
     if (prod?.image && tenant?.features?.images) await sendImage(from, prod.image, `${prod.name} - ${fmtMoney(prod.price, tenantCurrency(tenant))}`, tenant);
     await sendWhatsAppMessage(from, result.reply, tenant);
   } catch (sendErr) {
@@ -47,13 +45,13 @@ export async function handleAi(ctx) {
       transfer_to_human: true,
       intent: "تصعيد",
     };
-    console.log(`  🤖 ${tenant?.botName || "كريم"} -> تصعيد مستمر (رد حتمي، بلا AI)`);
+    console.log(`  🤖 ${tenant?.botName || "وصل"} -> تصعيد مستمر (رد حتمي، بلا AI)`);
   } else {
     result = await processCustomerMessage(text, from, tenant);
   }
   ctx.result = result;
 
-  console.log(`  🤖 ${tenant?.botName || "كريم"} -> intent=${result.intent} transfer=${result.transfer_to_human}`);
+  console.log(`  🤖 ${tenant?.botName || "وصل"} -> intent=${result.intent} transfer=${result.transfer_to_human}`);
   console.log(`  💬 الرد: "${result.reply}"`);
   logEvent("message", { tenantId: tenant?.id, phone: from, intent: result.intent, transfer: result.transfer_to_human, text: text.slice(0, 200) }).catch(() => {});
 
@@ -72,10 +70,10 @@ export async function handleAi(ctx) {
     }
   }
 
-  // —— إنشاء طلب + تعليمات الدفع عند نية الشراء (متاجر) ——
+  // —— إنشاء طلب + تعليمات الدفع عند نية الشراء (أي متجر بمنتجات، بلا حجز) ——
   const wantsPay =
     result.intent === "شراء" &&
-    (tenant?.businessType === "sport-store" || (tenant.products || []).length > 0) &&
+    (tenant?.products || []).length > 0 &&
     !tenant?.features?.booking;
   if (wantsPay) {
     try {
@@ -97,10 +95,13 @@ export async function handleAi(ctx) {
     } else if (result.buttons?.length && tenant?.features?.buttons) {
       await sendButtons(from, result.reply, result.buttons, tenant);
     } else {
-      // أول عرض للمنتجات: أرفق أزرار تلقائياً (كريم فقط، أول رسالتين)
+      // أول عرض للمنتجات: أرفق أزرار تلقائياً حسب إعداد البوت —
+      // features.autoButtonsFirstN (عدد الرسائل الأولى) + autoButtonsKeywords (كلمات تستحق الأزرار)
+      const autoN = Number(tenant?.features?.autoButtonsFirstN || 0);
+      const autoKw = tenant?.features?.autoButtonsKeywords || [];
       const histLen = (await getHistory(from, tenant)).length;
       await sendWhatsAppMessage(from, result.reply, tenant);
-      if (tenant?.id === "kareem-sport" && histLen <= 2 && /حذاء|حزام|Bundle|لدينا/i.test(result.reply)) {
+      if (autoN > 0 && histLen <= autoN && (!autoKw.length || autoKw.some((k) => result.reply.includes(k)))) {
         await sendButtons(from, "اختار بسرعة 👇", await defaultButtonsFor(tenant), tenant).catch(() => {});
       }
     }

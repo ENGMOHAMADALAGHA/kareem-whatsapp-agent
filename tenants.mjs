@@ -30,7 +30,6 @@ function toPublic(t) {
     enabled: t.enabled !== false,
     businessType: t.businessType,
     phone_number_id: t.phoneNumberId || process.env.WHATSAPP_PHONE_ID || null,
-    isDefault: t.id === "kareem-sport",
     productsCount: (t.products || []).length,
     plan: t.plan || "trial",
     trialEndsAt: t.trialEndsAt || null,
@@ -63,11 +62,6 @@ export async function getTenant(id) {
   return row;
 }
 
-export async function getDefaultTenant() {
-  const tenants = await loadTenants();
-  return tenants.find((t) => t.id === "kareem-sport") || tenants[0] || null;
-}
-
 // أهم دالة للعزل: نحل أي رسالة واتساب لأي tenant حسب phone_number_id
 export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
   const tenants = await loadTenants();
@@ -75,20 +69,18 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
   const envVerify = process.env.WEBHOOK_VERIFY_TOKEN || "my_secret_token";
 
   if (phoneNumberId) {
-    // أولاً: كل البوتات المسجلة على هذا الرقم
+    // أولاً: كل البوتات المسجلة على هذا الرقم — يجب أن يكون واحداً فقط.
+    // رقم مشترك = خطأ إعداد: نرفض التوجيه (fail-closed) بدل تخمين بوت —
+    // لا أفضلية لأي بوت؛ كل البوتات سواسية داخل منصة وصل.
     const matches = tenants.filter((t) => t.phoneNumberId && t.phoneNumberId === phoneNumberId);
     if (matches.length > 1) {
-      // رقم مشترك بين أكثر من بوت (حالة الكشف التجريبي) — نفضّل الافتراضي كريم
-      // لمنع خلط الردود، ونحذر قبل الاختيار حتى ينتبه المسؤول للرقم المكرر.
-      console.warn(`  ⚠️ رقم مشترك: ${phoneNumberId} مسجَّل عند ${matches.map((t) => t.id).join("، ")} — سيُفضَّل بوت كريم`);
-      const def = matches.find((t) => t.id === "kareem-sport") || matches[0];
-      return withEnvDefaults(def);
+      console.error(`  ⛔ رقم مشترك مرفوض: ${phoneNumberId} مسجَّل عند ${matches.map((t) => t.id).join("، ")} — أزل التكرار من /admin/tenants (رقم واحد لكل بوت)`);
+      return null;
     }
     const exact = matches[0];
     if (exact) return withEnvDefaults(exact);
-    // ثانياً: الافتراضي (كريم) عند تطابق رقم البيئة المشترك
-    const def = tenants.find((t) => t.id === "kareem-sport" && (t.phoneNumberId || envPhoneId) === phoneNumberId)
-      || tenants.find((t) => (t.phoneNumberId || envPhoneId) === phoneNumberId);
+    // ثانياً: مطابقة رقم البيئة المشترك (بوتات بلا رقم خاص)
+    const def = tenants.find((t) => (t.phoneNumberId || envPhoneId) === phoneNumberId);
     if (def) return withEnvDefaults(def);
     // رقم بوت غير معروف إطلاقاً — لا نعالجه كبوت افتراضي (منع خلط المستأجرين)
     console.warn(`  ⛔ phone_number_id غير مسجل (${phoneNumberId}) — تجاهل لتجنب خلط البوتات`);
@@ -98,16 +90,24 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
     const hit = tenants.find((t) => (t.verifyToken || envVerify) === verifyToken);
     if (hit) return withEnvDefaults(hit);
   }
-  const def = tenants.find((t) => t.id === "kareem-sport") || tenants[0];
-  return def ? withEnvDefaults(def) : null;
+  // بلا معيار مطابقة: لا بوت افتراضي صامت — المتصل يحدد البوت صراحةً
+  console.warn("  ⚠️ resolveTenant بلا phoneNumberId ولا verifyToken — رفض (لا افتراضي صامت بمنصة وصل)");
+  return null;
 }
 
+const envFallbackWarned = new Set();
 function withEnvDefaults(t) {
   let perTenantToken = null;
   try {
     // فك متزامن وخفيف (AES-GCM) — التوكن الخاص أولاً، ثم المشترك
     if (t?.whatsappToken) perTenantToken = decryptSecret(t.whatsappToken);
   } catch { /* رجوع للمشترك */ }
+  // شفافية المنصة: البوت بلا بياناته الخاصة يستخدم المشتركة — نحذر مرة واحدة لكل بوت
+  // (الحالة الصحيحة: كل بوت له phoneNumberId وتوكن خاصان من /admin/tenants)
+  if ((!t?.phoneNumberId || !perTenantToken) && t?.id && !envFallbackWarned.has(t.id)) {
+    envFallbackWarned.add(t.id);
+    console.warn(`  ⚠️ البوت ${t.id} بلا بيانات ربط خاصة (يستخدم المشتركة) — أدخل phoneNumberId والتوكن من /admin/tenants`);
+  }
   return {
     ...t,
     phone_number_id: t.phoneNumberId || process.env.WHATSAPP_PHONE_ID || null,
@@ -129,9 +129,10 @@ export function memoryKey(tenantId, phone) {
 }
 
 // حل مرن: id نصي أو كائن tenant جاهز (يستخدمه المرسل والذاكرة)
+// بلا مدخل أو id مجهول: null (لا افتراضي صامت — المتصل يحدد البوت صراحةً)
 export async function resolveTenantInput(input) {
-  if (!input) return resolveTenant({});
-  if (typeof input === "string") return (await getTenantFull(input)) || resolveTenant({});
+  if (!input) return null;
+  if (typeof input === "string") return (await getTenantFull(input)) || null;
   return input;
 }
 
@@ -152,6 +153,8 @@ export async function updateTenant(id, data) {
   const allowed = ["name", "botName", "enabled", "phoneNumberId", "verifyToken", "businessType", "products", "deliveryFee", "bundleOffer", "tone", "languages", "features", "plan", "trialEndsAt"];
   const clean = {};
   for (const k of allowed) if (data[k] !== undefined) clean[k] = data[k];
+  // قاعدة المنصة: رقم واحد لكل بوت — مشاركة الأرقام مرفوضة (تمنع خلط الردود)
+  if (clean.phoneNumberId) await assertPhoneUnique(clean.phoneNumberId, id);
   // whatsappToken يُقبل باسم whatsappToken أو whatsapp_token ويُشفر قبل التخزين
   const rawToken = data.whatsappToken ?? data.whatsapp_token;
   if (rawToken !== undefined) {
@@ -172,6 +175,8 @@ export async function addTenant(data) {
   if (!/^[a-z0-9-]+$/.test(data.id)) {
     throw new Error("id يجب أن يكون حروف إنجليزية صغيرة وأرقام و - فقط");
   }
+  const phoneNumberId = data.phone_number_id || data.phoneNumberId || null;
+  if (phoneNumberId) await assertPhoneUnique(phoneNumberId, null);
   const rawToken = data.whatsappToken ?? data.whatsapp_token;
   const created = await systemDb("tenants:create").tenant.create({
     data: {
@@ -179,7 +184,7 @@ export async function addTenant(data) {
       name: data.name,
       botName: data.botName,
       enabled: data.enabled !== false,
-      phoneNumberId: data.phone_number_id || data.phoneNumberId || null,
+      phoneNumberId,
       verifyToken: data.verify_token || data.verifyToken || null,
       whatsappToken: rawToken ? encryptSecret(String(rawToken)) : null,
       plan: cleanPlan(data.plan),
@@ -200,6 +205,17 @@ export async function addTenant(data) {
 // تجربة افتراضية 14 يوماً للبوتات الجديدة (ما لم يُحدد plan مدفوع)
 function defaultTrialEnd() {
   return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+}
+
+// رقم واحد لكل بوت: يرمي خطأً واضحاً عند تكرار phoneNumberId على بوت آخر
+async function assertPhoneUnique(phoneNumberId, exceptId) {
+  if (!phoneNumberId) return;
+  const clash = (await loadTenants()).find((t) => t.phoneNumberId === phoneNumberId && t.id !== exceptId);
+  if (clash) {
+    const e = new Error(`الرقم ${phoneNumberId} مسجل مسبقاً على بوت "${clash.id}" — رقم واحد لكل بوت`);
+    e.code = "PHONE_TAKEN";
+    throw e;
+  }
 }
 
 export async function deleteTenant(id) {

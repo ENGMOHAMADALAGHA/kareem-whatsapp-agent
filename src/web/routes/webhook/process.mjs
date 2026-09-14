@@ -33,8 +33,8 @@ export async function processWebhookBody(body) {
           continue;
         }
         // عزل تام (الدفاع الأعمق): أي دفعة بلا رقم بوت مسجل نتجاهلها كاملةً —
-        // (أ) رقم غير مسجل → null من resolveTenant (ب) رقم غائب → لا يشترط كريم الافتراضي.
-        // بدون هذا، رسائل غريبة بلا phone_number_id كانت تسلك لكريم (تسريب مستأجرين).
+        // (أ) رقم غير مسجل → null من resolveTenant (ب) رقم غائب → لا بوت افتراضي بمنصة وصل.
+        // بدون هذا، رسائل غريبة بلا phone_number_id كانت تُسند لبوت ما (تسريب مستأجرين).
         if (!tenant || !phoneNumberId) {
           const why = !phoneNumberId ? "phone_number_id غائب في الدفعة" : `رقم بوت غير مسجل (${phoneNumberId})`;
           console.log(`  ⛔ دفعة بلا tenant مسجل — ${why} — تجاهل كامل`);
@@ -89,8 +89,7 @@ export async function processWebhookBody(body) {
           console.log(`  📥 رسالة واتساب من ${name} (${from}): "${ctx.text}"${buttonId ? ` [btn=${buttonId}]` : ""}`);
           console.log(`  🧠 الذاكرة: ${(await getHistory(from, tenant)).length} رسائل سابقة`);
 
-          // أزرار منتجات كريم قبل الفرز (كما كانت)
-          // ملاحظة الترتيب الأصلي: الطاقم/takeover أولاً — زر الشراء لا يتجاوز إسكات "قف"
+          // ملاحظة الترتيب: الطاقم/takeover أولاً — زر الشراء لا يتجاوز إسكات "قف"
           if (await handleStaff(ctx)) continue;
 
           // طلبات: نسيان + استعلام + تقييم
@@ -101,7 +100,7 @@ export async function processWebhookBody(body) {
           // —— تدفق الحجز (للعيادات) قبل الـ AI ——
           ctx.wantsBooking = tenant?.features?.booking && /(حجز|موعد|احجز|book|appointment)/i.test(ctx.text + " " + (buttonId || ""));
           ctx.bookingState = await getBookingState(tenant?.id, from);
-          // أزرار منتجات كريم (بعد الطلبات وقبل الفرز — كما كانت أصلاً — وتحترم takeover)
+          // أزرار منتجات البوت (بعد الطلبات وقبل الفرز — وتحترم takeover)
           if (await handleProductButtons(ctx)) continue;
           if (await handleBooking(ctx)) continue;
 

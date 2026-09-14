@@ -3,7 +3,7 @@ import { MAX_HISTORY, MEMORY_TTL_MS } from "../config/env.mjs";
 import { tenantDb } from "../security/tenantGuard.mjs";
 
 function keyOf(phone, tenant) {
-  const tid = tenant?.id || "kareem-sport";
+  const tid = tenant?.id || "wasl-unscoped";
   // عزل تام: tenant + phone (نفس الرقم عند بوتين = ذاكرتين منفصلتين)
   return memoryKey(tid, phone);
 }
