@@ -26,7 +26,7 @@ export async function handleCompliance(ctx) {
   }
   if (isOptIn(text)) {
     await clearOptOut(tenant?.id, from);
-    const reply = `أهلاً بعودتك يا بطل! 🎉 رجّعنا اشتراكك ورح توصلك عروضنا. كيف بقدر أساعدك اليوم؟`;
+    const reply = `أهلاً بعودتك يا غالي! 🎉 رجّعنا اشتراكك ورح توصلك عروضنا. كيف بقدر أساعدك اليوم؟`;
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reply, tenant);
     logEvent("opt_in", { tenantId: tenant?.id, phone: from }).catch(() => {});

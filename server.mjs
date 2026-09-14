@@ -1,23 +1,34 @@
 import { startServer } from "./agent.mjs";
 import { db } from "./db.mjs";
 
-// إغلاق نظيف: أغلق اتصالات القاعدة قبل الخروج حتى لا تُترك اتصالات عالقة
+let httpServer = null;
+
+// إغلاق نظيف: صرّف اتصالات HTTP الطائرة أولاً ثم القاعدة — بلا قطع لطلبات حية
 function gracefulShutdown(signal) {
   console.error(`  🛑 ${signal} — إغلاق نظيف...`);
-  Promise.resolve(db()?.$disconnect?.())
-    .catch((e) => console.error(`  ⚠️ فشل إغلاق القاعدة: ${e?.message}`))
-    .finally(() => process.exit(0));
-  setTimeout(() => process.exit(0), 3000).unref?.();
+  const killer = setTimeout(() => process.exit(0), 8000).unref?.();
+  const closeHttp = httpServer
+    ? new Promise((res) => httpServer.close(() => res()))
+    : Promise.resolve();
+  closeHttp
+    .catch((e) => console.error(`  ⚠️ فشل تصريف HTTP: ${e?.message}`))
+    .then(() => Promise.resolve(db()?.$disconnect?.()).catch((e) => console.error(`  ⚠️ فشل إغلاق القاعدة: ${e?.message}`)))
+    .finally(() => {
+      clearTimeout(killer);
+      process.exit(0);
+    });
 }
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-// سيرفر مستقل - يستورد منطق كريم من agent.mjs
+// سيرفر مستقل - يستورد منطق وصل من agent.mjs
 // للتشغيل: node server.mjs أو npm start
 
-// شبكة أمان أخيرة: سجّل بدل الانهيار الصامت
+// رفض غير معالَج = حالة مجهولة: سجّل واخرج ليعيد المشرف التشغيل بحالة نظيفة
+// (فشل-سريع بدل بوت متدهور صامت — consistent مع uncaughtException)
 process.on("unhandledRejection", (reason) => {
-  console.error("  ☠️ unhandledRejection:", reason?.message || reason);
+  console.error("  ☠️ unhandledRejection (will exit 1):", reason?.message || reason);
+  setImmediate(() => process.exit(1));
 });
 // الأخطاء غير المعالجة قاتلة: سجّل واخرج بكود فشل صريح
 // حتى يعيد Render/PM2 التشغيل (فشل-سريع) بدل بوت أصم يخدم صامتاً
@@ -33,4 +44,9 @@ if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
   process.exit(1);
 }
 
-startServer();
+setHttpServer(startServer());
+
+export { httpServer };
+export function setHttpServer(s) {
+  httpServer = s;
+}

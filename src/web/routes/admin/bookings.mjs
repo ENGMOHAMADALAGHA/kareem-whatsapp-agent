@@ -32,6 +32,11 @@ export function registerBookingRoutes(app) {
     if (!phone || !day || !slot) return res.status(400).json({ ok: false, error: "phone و day و slot مطلوبة" });
     const { bookAppointment, freeSlots } = await import("../../../../bookings.mjs");
     try {
+      const { isTenantActive: isActiveManual } = await import("../../../../tenants.mjs");
+      const tCheck = await getTenantFull(tenantId);
+      if (tCheck && !isActiveManual(tCheck)) {
+        return res.status(403).json({ ok: false, error: "هذا البوت موقوف أو منتهي التجربة" });
+      }
       const b = await bookAppointment({ tenantId, phone: String(phone).trim(), name: (name || "").trim() || String(phone).trim(), service: (service || "").trim() || "موعد", day: String(day).trim(), slot: String(slot).trim() });
       const { getTenantFull: gtf } = await import("../../../../tenants.mjs");
       const tenant = await gtf(tenantId);
@@ -61,6 +66,8 @@ export function registerBookingRoutes(app) {
     for (const b of due) {
       const tenant = await getTenantFull(b.tenantId);
       if (!tenant) continue;
+      const { isTenantActive } = await import("../../../../tenants.mjs");
+      if (!isTenantActive(tenant)) continue; // kill-switch: لا تذكير لموقوف/منتهي
       const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
       // ادّعاء ذري قبل الإرسال — لا تكرار مع المؤقت أو مع نسخة أخرى
       const claimed = await markReminded(b.id, b.tenantId);
@@ -190,6 +197,10 @@ export function registerBookingRoutes(app) {
     if (!b) return res.status(404).json({ ok: false, error: "حجز غير موجود" });
     const tenant = await getTenantFull(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    const { isTenantActive: isActiveSingle } = await import("../../../../tenants.mjs");
+    if (!isActiveSingle(tenant)) {
+      return res.status(403).json({ ok: false, error: "هذا البوت موقوف أو منتهي التجربة" });
+    }
     const { markReminded } = await import("../../../../bookings.mjs");
     const msg = `تذكير بموعدك يا غالي ⏰ ${b.service} - الساعة ${b.slot} (${b.id}) في ${tenant.name}. للتأكيد ابعت "تم"، وللإلغاء ابعت "أريد موظف".`;
     try {

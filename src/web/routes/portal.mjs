@@ -17,6 +17,10 @@ export function registerPortalRoutes(app) {
       const u = await verifyClientUser(tenantId, phone, password);
       if (!u) return res.status(401).json({ ok: false, error: "بيانات الدخول غير صحيحة" });
       if (u.disabled) return res.status(403).json({ ok: false, error: "هذا البوت موقوف — تواصل مع الإدارة" });
+      // اتساق مع adminAuth: تجربة منتهية = مرفوض (كان يدخل هنا ويُمنع هناك)
+      if (u.tenant && u.tenant.trialEndsAt && (u.tenant.plan || "trial") === "trial" && new Date(u.tenant.trialEndsAt) < new Date()) {
+        return res.status(403).json({ ok: false, error: "الفترة التجريبية انتهت — جدد خطتك لمتابعة الدخول" });
+      }
       res.json({ ok: true, token: signClientToken(u), botName: u.tenant?.botName, tenantId: u.tenantId });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });

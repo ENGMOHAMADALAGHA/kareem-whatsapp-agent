@@ -60,9 +60,14 @@ function wrapModel(delegate, model, tenantId) {
       // في استعلام واحد، والعدّ يخبرنا إن كان السجل موجوداً ضمن النطاق أصلاً.
       if (op === "update") {
         return async (args = {}) => {
-          const upd = await target
-            .updateMany({ where: { ...args.where, tenantId }, data: args.data })
-            .catch(() => ({ count: 0 }));
+          let upd;
+          try {
+            upd = await target.updateMany({ where: { ...args.where, tenantId }, data: args.data });
+          } catch (e) {
+            // عطل تقني ≠ رفض صلاحية: نسجل ونرمي الأصل (لا 404 مضللة)
+            console.error(`  ☠️ عطل DB بتحديث ${model}: ${e?.message || e}`);
+            throw e;
+          }
           if (!upd?.count) {
             const e = new Error("السجل غير موجود في نطاقك");
             e.code = "TENANT_DENIED";
@@ -75,9 +80,13 @@ function wrapModel(delegate, model, tenantId) {
         return async (args = {}) => {
           // ذري: حذف مشروط واحد — بلا قراءة مسبقة (لا TOCTOU).
           // نعيد null عند عدم التطابق بدل كشف وجود سجل خارج النطاق.
-          const del = await target
-            .deleteMany({ where: { ...args.where, tenantId } })
-            .catch(() => ({ count: 0 }));
+          let del;
+          try {
+            del = await target.deleteMany({ where: { ...args.where, tenantId } });
+          } catch (e) {
+            console.error(`  ☠️ عطل DB بحذف ${model}: ${e?.message || e}`);
+            throw e;
+          }
           if (!del?.count) return null;
           return { deleted: true, count: del.count };
         };

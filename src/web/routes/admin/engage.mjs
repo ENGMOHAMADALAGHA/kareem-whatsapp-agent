@@ -1,7 +1,6 @@
 // راوتر التفاعل: broadcast + report + csat + crm
 import { getTenantFull } from "../../../../tenants.mjs";
 import { normalizePhone } from "../../../utils/phone.mjs";
-import { sendWhatsAppMessage } from "../../../whatsapp/sender.mjs";
 import { pushHistory } from "../../../memory/conversations.mjs";
 import {
   saveBroadcast,
@@ -37,19 +36,27 @@ export function registerEngageRoutes(app) {
       else eligible.push(phone);
     }
     const results = [];
+    let skippedSimulated = 0;
     for (const phone of eligible) {
       try {
-        await sendWhatsAppMessage(phone, text, tenant);
-        await pushHistory(phone, "assistant", text, tenant);
-        results.push({ phone, ok: true });
+        // عبر البديل الموحد: يحترم opt-out والنافذة والمحاكاة — لا "نجاح" وهمي
+        const { sendWithWindowFallback } = await import("../../../compliance/messaging.mjs");
+        const r = await sendWithWindowFallback(phone, text, tenant);
+        if (r.ok) {
+          await pushHistory(phone, "assistant", text, tenant);
+          results.push({ phone, ok: true });
+        } else {
+          if (r.reason === "simulated-no-credentials") skippedSimulated++;
+          results.push({ phone, ok: false, error: r.reason });
+        }
       } catch (e) {
         results.push({ phone, ok: false, error: e.message });
       }
       await new Promise((r) => setTimeout(r, 800)); // تجنب rate limit
     }
     const rec = await saveBroadcast({ tenantId, text, phones: normPhones, results });
-    logEvent("broadcast", { tenantId, count: normPhones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id, skippedOptOut: skippedOptOut.length }).catch(() => {});
-    res.json({ ok: true, broadcast: rec, skippedOptOut });
+    logEvent("broadcast", { tenantId, count: normPhones.length, sent: results.filter((r) => r.ok).length, broadcastId: rec.id, skippedOptOut: skippedOptOut.length, skippedSimulated }).catch(() => {});
+    res.json({ ok: true, broadcast: rec, skippedOptOut, skippedSimulated });
   });
   app.get("/admin/broadcasts", async (req, res) => {
     const scope = resolveScope(req, req.query.tenant);
@@ -96,7 +103,10 @@ export function registerEngageRoutes(app) {
     const msg = `شكراً لتعاملك معنا يا غالي! 🙏 قيّم تجربتك من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
     await requestCsat(tenantId, phone, null);
     try {
-      await sendWhatsAppMessage(phone, msg, tenant);
+      // عبر البديل الموحد: خارج النافذة يُستخدم القالب، والمحاكاة تُرجع سبباً صريحاً
+      const { sendWithWindowFallback } = await import("../../../compliance/messaging.mjs");
+      const r = await sendWithWindowFallback(phone, msg, tenant);
+      if (!r.ok) return res.status(502).json({ ok: false, error: r.reason });
       await pushHistory(phone, "assistant", msg, tenant);
       res.json({ ok: true });
     } catch (e) {

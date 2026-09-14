@@ -18,8 +18,7 @@ export function bookingDay(day) {
 // أي محور لسلعة/مبلغ مختلف (أو طلب قديم بمبلغ ملوث من كلام تسويقي) يُلغى ويُستبدل.
 export async function createOrderWithPayment(tenant, from, name, text, result) {
   if (!tenant) return; // تحصين: لا ننشئ طلباً بلا مستأجر
-  const { findRecentPending, cancelOpenOrders } = await import("../../../../orders.mjs");
-  const { createOrder } = await import("../../../../orders.mjs");
+  const { findRecentPending, cancelOpenOrders, createOrder } = await import("../../../../orders.mjs");
   const item = detectItem(tenant, text, result.reply);
   const freshTotal = detectTotal(tenant, text, result.reply || "");
   let order = await findRecentPending(tenant.id, from, 30);
@@ -33,7 +32,8 @@ export async function createOrderWithPayment(tenant, from, name, text, result) {
     const sameTotal = userTotal === null || Math.abs(Number(order.total) - userTotal) < 0.001;
     if (!sameItem || !sameTotal) {
       // محور الزبون (أو طلب قديم بمبلغ ملوث) → إلغاء الكل وبدء نظيف
-      const killed = await cancelOpenOrders(tenant.id, from).catch(() => 0);
+      // (يرمي عند عطل DB — المتصل يسجل ويكمل برد أمين بلا طلب وهمي)
+      const killed = await cancelOpenOrders(tenant.id, from);
       logEvent("order_superseded", { tenantId: tenant.id, phone: from, oldOrderId: order.id, killed }).catch(() => {});
       console.log(`  🔄 محور لسلعة/مبلغ مختلف — أُلغي ${killed} قديم، طلب جديد`);
       order = null;

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 // ──────────────────────────────────────────────
-// 2-4. الإعدادات والـ AI — نُقلت إلى src/config/env.mjs و src/ai/kareem.mjs
+// 2-4. الإعدادات والـ AI — نُقلت إلى src/config/env.mjs و src/ai/engine.mjs
 // ──────────────────────────────────────────────
 import {
   AI_PROVIDER,
@@ -32,14 +32,14 @@ export {
 } from "./src/inbox/service.mjs";
 
 // ──────────────────────────────────────────────
-// 6. الـ AI — نُقل إلى src/ai/kareem.mjs (إعادة تصدير للتوافق)
+// 6. الـ AI — نُقل إلى src/ai/engine.mjs (إعادة تصدير للتوافق)
 // ──────────────────────────────────────────────
 export {
   getKareemReply,
   processCustomerMessage,
   isDemoMode,
-} from "./src/ai/kareem.mjs";
-import { getKareemReply, isDemoMode } from "./src/ai/kareem.mjs";
+} from "./src/ai/engine.mjs";
+import { getKareemReply, isDemoMode } from "./src/ai/engine.mjs";
 
 // ──────────────────────────────────────────────
 // 6. الإرسال — نُقل إلى src/whatsapp/sender.mjs (إعادة تصدير للتوافق)

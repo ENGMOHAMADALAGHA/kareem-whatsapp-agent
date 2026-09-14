@@ -626,7 +626,7 @@ function showLogin() {
     await fetch("/portal/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone }) });
     const code = await promptDialog("إعادة التعيين", "أرسلنا رمزاً لواتساب " + phone + " — أدخله هنا:", { placeholder: "الرمز" });
     if (!code) return;
-    const np = await promptDialog("كلمة جديدة", "كلمة السر الجديدة (6 أحرف على الأقل):", { placeholder: "كلمة السر", password: true });
+    const np = await promptDialog("كلمة جديدة", "كلمة السر الجديدة (8 أحرف على الأقل):", { placeholder: "كلمة السر", password: true });
     if (!np) return;
     const j = await (await fetch("/portal/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenantId, phone, code, newPassword: np }) })).json();
     $("liMsg").textContent = j.ok ? "تم ✅ سجل دخولك الآن" : j.error;

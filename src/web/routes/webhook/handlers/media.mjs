@@ -39,8 +39,10 @@ export async function handleReceiptImage(ctx) {
   if (!((msg.type === "image" || msg.image?.id || msg.type === "document" || msg.document?.id) && !text)) return false;
   const mediaId = msg.image?.id || msg.document?.id;
   const mimeType = msg.document?.mime_type || "image/jpeg";
+  // الكابشن قد يحمل رقم الطلب — يُمرر للربط الدقيق بدل الأحدث دائماً
+  const caption = msg.image?.caption || msg.document?.caption || msg.document?.filename || "";
   const { handleReceiptImage } = await import("../../../../media/paymentProof.mjs");
-  const res = await handleReceiptImage({ tenant, phone: from, mediaId, mimeType });
+  const res = await handleReceiptImage({ tenant, phone: from, mediaId, mimeType, caption });
   if (res.outcome === "no-tenant") {
     // دفاع بالعمق: البوابة العليا تمنع الوصول أصلاً — هذا الفرع للوضوح فقط
     console.log(`  ⛔ إيصال بلا مستأجر (media=${mediaId}) — تجاهل صريح`);
@@ -64,7 +66,7 @@ export async function handleReceiptImage(ctx) {
     console.log(`${"─".repeat(60)}\n`);
   } else if (res.outcome === "manual") {
     // بدون مفتاح AI: المسار اليدوي — إرفاق + انتظار الموظف
-    const reply = `وصلتني اللقطة يا بطل 📸 ربطتها بطلبك ${res.orderId} (${fmtMoney(res.total, res.currency)}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
+    const reply = `وصلتني اللقطة يا غالي 📸 ربطتها بطلبك ${res.orderId} (${fmtMoney(res.total, res.currency)}). الموظف رح يتأكد من التحويل ويبعتلك التأكيد هنا. شكراً لثقتك!`;
     await pushHistory(from, "user", "[صورة: لقطة تحويل]", tenant);
     await pushHistory(from, "assistant", reply, tenant);
     try {

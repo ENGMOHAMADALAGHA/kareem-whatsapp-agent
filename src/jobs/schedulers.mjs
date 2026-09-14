@@ -63,8 +63,8 @@ export function startSchedulers() {
           if (!claimed.length) continue;
           const lines = claimed.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
           const msg = claimed.length === 1
-            ? `يا هلا يا بطل! 👋 شفنا طلبك ${claimed[0].id} (${fmtMoney(claimed[0].total, claimed[0].currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
-            : `يا هلا يا بطل! 👋 عندك ${claimed.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
+            ? `يا هلا يا غالي! 👋 شفنا طلبك ${claimed[0].id} (${fmtMoney(claimed[0].total, claimed[0].currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
+            : `يا هلا يا غالي! 👋 عندك ${claimed.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
           try {
             // نفس سياسة الامتثال: من ألغى الاشتراك لا يرى سلة مهجورة، وخارج النافذة قالب بديل
             const r = await sendWithWindowFallback(first.phone, msg, tenant);

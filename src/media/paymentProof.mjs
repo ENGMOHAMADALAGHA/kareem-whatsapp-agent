@@ -114,16 +114,26 @@ export function verifyReceiptAgainstOrder(extracted, order, tenant) {
 }
 
 // ── 3) المنسّق الكامل: صورة واتساب → (تأكيد تلقائي | مراجعة يدوية) ──
-export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "image/jpeg" }) {
+export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "image/jpeg", caption = "" }) {
   const { downloadWhatsAppMedia } = await import("../../voice.mjs");
-  const { latestPendingOrder, latestRejectedOrder, reopenRejectedOrder, markOrderReview } = await import("../../orders.mjs");
+  const { latestPendingOrder, latestRejectedOrder, reopenRejectedOrder, markOrderReview, getOrder } = await import("../../orders.mjs");
   const { finalizePaidOrder } = await import("../web/routes/billing.mjs");
   const { sendWhatsAppMessage } = await import("../whatsapp/sender.mjs");
   const { pushHistory } = await import("../memory/conversations.mjs");
   const { logEvent } = await import("../../crm.mjs");
 
   if (!tenant) return { outcome: "no-tenant" }; // تحصين: لا نعالج إيصالاً بلا مستأجر
-  let order = await latestPendingOrder(tenant.id, phone);
+  // الكابشن قد يحمل رقم الطلب (ord_xxx) — أولوية على الأحدث المعلق (مع تحقق الملكية)
+  let order = null;
+  const capMatch = String(caption || "").match(/\b(ord_[a-z0-9]+)\b/i);
+  if (capMatch) {
+    const cand = await getOrder(capMatch[1].toLowerCase(), tenant.id).catch(() => null);
+    if (cand && cand.phone === phone && ["pending", "proof_received", "pending_review"].includes(cand.status)) {
+      order = cand;
+      console.log(`  🧾 إيصال مربوط بالطلب المذكور ${order.id} من الكابشن`);
+    }
+  }
+  if (!order) order = await latestPendingOrder(tenant.id, phone);
   let reopened = false;
   if (!order) {
     // إعادة المحاولة: طلب مرفوض خلال 48 ساعة يُعاد فتحه تلقائياً عند وصول لقطة جديدة —
@@ -159,13 +169,14 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
   }
 
   const { match, reasons } = verifyReceiptAgainstOrder(extracted, order, tenant);
-  // حماية إعادة الاستخدام: نفس رقم المرجع المرجعي لا يُسدد طلباً ثانياً تلقائياً —
-  // لقطة واحدة (أو صورة متطابقة) تُدفع مرة واحدة فقط مهما تعددت الطلبات المعلقة.
+  // بلا محافظ مسجلة: المبلغ وحده لا يكفي — مراجعة يدوية حصراً (fail-closed)
+  if (!(tenant?.features?.paymentWallets || []).length) reasons.push("no-wallets-configured");
+  // حماية إعادة الاستخدام على مستوى البوت كله: نفس المرجع لا يُسدد طلباً ثانياً تلقائياً —
+  // لقطة واحدة (أو صورة متطابقة) تُدفع مرة واحدة فقط مهما تعددت الأرقام والطلبات المعلقة.
   if (match && extracted.referenceNumber) {
     const { tenantDb } = await import("../../security/tenantGuard.mjs");
     const dup = await tenantDb(tenant.id).order.findFirst({
       where: {
-        phone,
         status: "paid",
         id: { not: order.id },
         proof: { path: ["receipt", "referenceNumber"], equals: extracted.referenceNumber },
@@ -181,7 +192,18 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
   const isMatch = match && reasons.length === 0;
 
   if (isMatch) {
-    await finalizePaidOrder(order.id, "receipt-ai");
+    try {
+      await finalizePaidOrder(order.id, "receipt-ai");
+    } catch (e) {
+      // تثبيت الدفع فشل تقنياً (عطل DB أو حالة تغيرت) — مراجعة يدوية بدل الصمت
+      console.error(`  ☠️ تعذر تثبيت الدفع التلقائي ${order.id}: ${e?.message || e}`);
+      await markOrderReview(order.id, tenant.id, proof);
+      try {
+        const { notifyStaff } = await import("../compliance/messaging.mjs");
+        await notifyStaff(tenant, `🔍 تعذر التثبيت التلقائي: طلب ${order.id} من ${phone} (${e?.message || "عطل"})`);
+      } catch { /* التنبيه أفضل-جهد */ }
+      return { outcome: "review", orderId: order.id, reasons: [...reasons, "finalize-failed"], receipt: extracted };
+    }
     const paidLabel = extracted.currency
       ? `${extracted.amountPaid} ${extracted.currency}`
       : `$${extracted.amountPaid}`;
@@ -217,7 +239,7 @@ export async function handleReceiptImage({ tenant, phone, mediaId, mimeType = "i
       }).join("، ")
     : "تحقق إضافي";
   const msg =
-    `وصلني الإيصال يا بطل 📸 بس في ملاحظة: ${noteAr}.\n` +
+    `وصلني الإيصال يا غالي 📸 بس في ملاحظة: ${noteAr}.\n` +
     `حطيت طلبك ${order.id} قيد المراجعة 🔍 والموظف رح يتأكد ويبعتلك التأكيد هنا. شكراً لصبرك!`;
   try {
     await sendWhatsAppMessage(phone, msg, tenant);

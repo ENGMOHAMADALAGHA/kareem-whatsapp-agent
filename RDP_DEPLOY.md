@@ -11,8 +11,8 @@
 
 ## 2. أول تنصيب
 ```powershell
-git clone https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent.git C:\bots\kareem
-cd C:\bots\kareem
+git clone https://github.com/ENGMOHAMADALAGHA/wasl-command-center.git C:\bots\wasl
+cd C:\bots\wasl
 Copy-Item .env.example .env
 notepad .env   # عبّي المفاتيح الحقيقية (لازم DATABASE_URL أولاً)
 npm install
@@ -24,7 +24,7 @@ npm install
 > npm run db:sql   # يعيد توليد prisma/schema.sql من schema.prisma (رفيف)
 > npm run db:init  # يطبّق المخطط فقط على قاعدة لا تحتوي tenants — آمن
 > ```
-> **قاعدة قائمة (Supabase الحالي):** التخطي — الجداول موجودة. لا تشغّل `db:init` فوقها
+> **قاعدة قائمة (Neon الحالي):** التخطي — الجداول موجودة. لا تشغّل `db:init` فوقها
 > (لا تغيير، لكن لا داعي للخطر أيضاً).
 > **تغيير مستقبلي بالـ schema.prisma:** نُنشئ migration حقيقي ولا نعدّل schema.sql يدوياً
 > (مبدئياً: `prisma migrate diff --from-empty --to-schema ...` للحصول على أساس، مع مراجعة يدوية).
@@ -34,7 +34,7 @@ npm install
 node --check *.mjs
 npm test       # اختبارات الوحدات (node:test): تشفير/توقيت/طلبات/طابور/CSRF
 npm run test:ai  # اختياري: دخان AI (يستهلك API) — 8 سيناريوهات
-pm2 start server.mjs --name kareem
+pm2 start ecosystem.config.cjs   # الاسم والحدود من الملف (wasl)
 pm2 startup
 pm2 save
 # فحص البقاء:
@@ -64,24 +64,23 @@ cloudflared tunnel --url http://localhost:3000
 
 ## 5. تحديث الكود لاحقاً
 ```powershell
-cd C:\bots\kareem
+cd C:\bots\wasl
 git pull origin main
-pm2 restart kareem
+pm2 restart wasl
 ```
 
-## 6. إضافة بوت جديد (عيادة/متجر) بدون سيرفر جديد
+## 6. إضافة بوت جديد (عيادة/متجر) بدون سيرفر جديد — رقم واحد لكل بوت
 ```powershell
-curl -X POST http://localhost:3000/admin/tenants -H "Content-Type: application/json" -d "{\"id\":\"agha-dental\",\"name\":\"عيادة ...\",\"botName\":\"ليان\",\"businessType\":\"dental\",\"products\":[{\"name\":\"تنظيف\",\"price\":30}],\"deliveryFee\":0}"
-# يرجع 201 -> أعطِ العميل: Webhook URL + Verify Token الخاص فيه
+# 1) أنشئ البوت (مصادقة السوبر إجبارية + رقم غير مستخدم + توكن خاص):
+curl.exe -u admin:ADMIN_PASS -X POST http://localhost:3000/admin/tenants -H "Content-Type: application/json" -d '{\"id\":\"agha-dental\",\"name\":\"عيادة ...\",\"botName\":\"ليان\",\"businessType\":\"dental\",\"phoneNumberId\":\"PHONE_ID\",\"verifyToken\":\"RANDOM_TOKEN\",\"products\":[{\"name\":\"تنظيف\",\"price\":30}],\"deliveryFee\":0}'
+# يرجع 201 -> 2) افحص الربط: POST /admin/tenants/:id/test-link -> linked:true
+# 3) أنشئ دعوة عميل: POST /admin/invites {tenantId, phone} -> tempPassword
+# 4) أعطِ العميل: رابط البوابة + رقمه + كلمته المؤقتة
 ```
 
 ## 7. نسخ احتياطي
-- البيانات في **PostgreSQL** (Supabase يوفّر PITR/PGBackups تلقائياً — فعّلها من لوحته).
-- لـ RDP المحلي: جدولة `pg_dump` يومية:
-  ```powershell
-  # مهمة مجدولة يومياً:
-  pg_dump "$env:DATABASE_URL" --format=custom -f "C:\bots\backups\wasl_$(Get-Date -Format yyyyMMdd).dump"
-  ```
+- البيانات في **PostgreSQL (Neon)** — شغّل `npm run backup` (تدوير 7 نسخ) + فعّل PITR من لوحة Neon.
+- لـ RDP المحلي: جدولة `npm run backup` يومياً عبر Task Scheduler (تستخدم `BACKUP_DIR/BACKUP_KEEP`).
 - `tenants.json` كان للنسخة القديمة قبل Postgres — أُزيل من الالتزام. لا ترفع `.env` على GitHub أبداً.
 
 ## 8. قالب Meta للمتابعة خارج نافذة 24 ساعة ⏰
@@ -100,7 +99,7 @@ curl -X POST http://localhost:3000/admin/tenants -H "Content-Type: application/j
 - **لا يوجد إيقاف لمستخدم مفرد** في بوابة العميل (لا حقول معطلة) — أي لوحة تتظاهر بذلك غير موجودة
   في النظام. لعزل عميل مفرد: تواصل مع الإدارة أو اغلق بوت التنن كله.
 
-## 8. الفرق عن Render
+## 10. الفرق عن Render
 | | Render Free | RDP خاص |
 |---|---|---|
 | النوم | ينام بعد 15د (يحتاج keep-alive) | شغال 24/7 |

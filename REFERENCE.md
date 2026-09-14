@@ -59,11 +59,11 @@ prisma/schema.prisma  → 10 جداول (أدناه) + seed.mjs
 src/
   web/app.mjs         → Express + 404/500 موحدة + تحذيرات إقلاع
   web/middleware.mjs  → adminAuth (fail-closed) + HMAC + scopeClient
-  web/routes/admin.mjs    → كل مسارات الإدارة (~30)
-  web/routes/webhook.mjs  → الاستقبال + كل التدفقات + FIFO لكل مرسل
+  web/routes/admin/    → 8 راوترات فرعية (tenants/bookings/orders/engage/inbox/pages/scope/index)
+  web/routes/webhook/ → تحقق + استقبال + موزع + 5 معالجات (media/compliance/orders/booking/ai)
   web/routes/portal.mjs   → login/forgot/reset
   web/routes/billing.mjs  → finalizePaidOrder الذري فقط
-  ai/kareem.mjs       → Gemini (سياق مقلّم 6×500، مهلة 25ث) + mock
+  ai/engine.mjs       → Gemini (سياق مقلّم 6×500، مهلة 25ث) + mock (واجهة kareem.mjs للتوافق)
   memory/conversations.mjs → ذاكرة + dedup دائم (ذاكرة→Redis→DB)
   inbox/service.mjs   → takeover بلا expiry افتراضياً (يدوي فقط)
   whatsapp/sender.mjs → إرسال + retry ذكي + قوالب + WINDOW_CLOSED

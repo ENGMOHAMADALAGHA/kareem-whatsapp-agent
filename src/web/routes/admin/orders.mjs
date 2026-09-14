@@ -1,7 +1,6 @@
 // راوتر الطلبات: orders + summary + confirm + proof-media + reject + cart-remind-run
-import { getTenantFull } from "../../../../tenants.mjs";
+import { getTenantFull, isTenantActive } from "../../../../tenants.mjs";
 import { listOrders, markCartReminded, fmtMoney } from "../../../../orders.mjs";
-import { sendWhatsAppMessage } from "../../../whatsapp/sender.mjs";
 import { pushHistory } from "../../../memory/conversations.mjs";
 import { sendWithWindowFallback } from "../../../compliance/messaging.mjs";
 import { logEvent } from "../../../../crm.mjs";
@@ -34,21 +33,40 @@ export function registerOrderRoutes(app) {
   app.post("/admin/orders/:id/confirm", async (req, res) => {
     const tenantId = req.clientTenant || req.body?.tenantId || req.query.tenant;
     if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId مطلوب" });
+    const { getTenantFull, isTenantActive } = await import("../../../../tenants.mjs");
+    const tenant = await getTenantFull(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: "tenant غير موجود" });
+    // kill-switch: لا تأكيد مدفوعات لبوت موقوف/منتهي (اتساق مع المجدول والبث)
+    if (!isTenantActive(tenant)) {
+      return res.status(403).json({ ok: false, error: tenant.enabled === false ? "هذا البوت موقوف" : "الفترة التجريبية لهذا البوت انتهت — جدد الخطة" });
+    }
     const { getOrder } = await import("../../../../orders.mjs");
     const order = await getOrder(req.params.id, tenantId).catch(() => null);
     if (!order) return res.status(404).json({ ok: false, error: "الطلب غير موجود" });
     const { finalizePaidOrder } = await import("../billing.mjs");
-    const { already } = await finalizePaidOrder(order.id, "manual", { csat: false });
-    if (already) return res.json({ ok: true, orderId: order.id, already: true });
-    const { getTenantFull } = await import("../../../../tenants.mjs");
-    const tenant = await getTenantFull(tenantId);
-    const { pushHistory } = await import("../../../memory/conversations.mjs");
-    const msg = `تم استلام الدفع يا بطل ✅ طلبك ${order.id} (${fmtMoney(order.total, order.currency)}) تأكد وبتجهز هلا للتوصيل. شكراً لثقتك!`;
-    if (tenant) {
-      await sendWhatsAppMessage(order.phone, msg, tenant).catch(() => {});
-      await pushHistory(order.phone, "assistant", msg, tenant);
+    let already = false;
+    try {
+      ({ already } = await finalizePaidOrder(order.id, "manual", { csat: false }));
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: e.message });
     }
-    res.json({ ok: true, orderId: order.id });
+    if (already) return res.json({ ok: true, orderId: order.id, already: true });
+    const { pushHistory } = await import("../../../memory/conversations.mjs");
+    const { sendWithWindowFallback } = await import("../../../compliance/messaging.mjs");
+    const msg = `تم استلام الدفع يا غالي ✅ طلبك ${order.id} (${fmtMoney(order.total, order.currency)}) تأكد وبتجهز هلا للتوصيل. شكراً لثقتك!`;
+    // الدفع مثبّت — الإشعار أفضل-جهد عبر البديل (قالب خارج النافذة) ولا يفشل التأكيد
+    let notified = true;
+    let notifyReason = null;
+    try {
+      const r = await sendWithWindowFallback(order.phone, msg, tenant);
+      notified = r.ok;
+      notifyReason = r.ok ? null : r.reason;
+      if (r.ok) await pushHistory(order.phone, "assistant", msg, tenant);
+    } catch (e) {
+      notified = false;
+      notifyReason = e.message;
+    }
+    res.json({ ok: true, orderId: order.id, notified, notifyReason });
   });
   // عرض صورة الإيصال داخل الأدمن (تحميل مؤقت من واتساب عبر Graph API — لا تُخزَّن)
   app.get("/admin/orders/:id/proof-media", async (req, res) => {
@@ -84,7 +102,7 @@ export function registerOrderRoutes(app) {
     const tenant = await getTenantFull(tenantId);
     const { pushHistory } = await import("../../../memory/conversations.mjs");
     logEvent("proof_rejected", { tenantId, phone: order.phone, orderId: order.id, reason }).catch(() => {});
-    const msg = `عذراً يا بطل 🙏 في مشكلة باعتماد إيصال طلبك ${order.id}: ${reason}.\nأرسل اللقطة من جديد هون 📸 لإعادة المحاولة، أو ابعت "أريد موظف" ونساعدك مباشرة.`;
+    const msg = `عذراً يا غالي 🙏 في مشكلة باعتماد إيصال طلبك ${order.id}: ${reason}.\nأرسل اللقطة من جديد هون 📸 لإعادة المحاولة، أو ابعت "أريد موظف" ونساعدك مباشرة.`;
     if (tenant) {
       await sendWithWindowFallback(order.phone, msg, tenant).catch(() => {});
       await pushHistory(order.phone, "assistant", msg, tenant);
@@ -110,7 +128,7 @@ export function registerOrderRoutes(app) {
     for (const [, list] of byPhone) {
       const first = list[0];
       const tenant = await getTenantFull(first.tenantId);
-      if (!tenant) continue;
+      if (!tenant || !isTenantActive(tenant)) continue; // kill-switch: لا سلة مهجورة لموقوف/منتهي
       // ادّعاء ذري لكل الطلبات قبل الإرسال — لا تكرار مع المؤقت
       const claimed = [];
       for (const o of list) {
@@ -119,8 +137,8 @@ export function registerOrderRoutes(app) {
       if (!claimed.length) continue;
       const lines = claimed.map((o) => `• ${o.id} (${fmtMoney(o.total, o.currency)})`).join("\n");
       const msg = claimed.length === 1
-        ? `يا هلا يا بطل! 👋 شفنا طلبك ${claimed[0].id} (${fmtMoney(claimed[0].total, claimed[0].currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
-        : `يا هلا يا بطل! 👋 عندك ${claimed.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
+        ? `يا هلا يا غالي! 👋 شفنا طلبك ${claimed[0].id} (${fmtMoney(claimed[0].total, claimed[0].currency)}) لسه ما اكتمل. تحب نكمله؟ ابعت لقطة الشاشة هون 📸`
+        : `يا هلا يا غالي! 👋 عندك ${claimed.length} طلبات لسه ما اكتملت:\n${lines}\nابعت رقم الطلب لنكمله مع بعض.`;
       try {
         const r = await sendWithWindowFallback(first.phone, msg, tenant);
         if (!r.ok) {

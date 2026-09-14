@@ -1,6 +1,5 @@
 import { tenantDb, systemDb } from "./src/security/tenantGuard.mjs";
 import crypto from "node:crypto";
-import { db } from "./db.mjs";
 import { normalizePhone } from "./src/utils/phone.mjs";
 
 const nid = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -115,13 +114,17 @@ function rowToOrder(r) {
   };
 }
 
-// إرفاق إثبات التحويل (لقطة شاشة محفظة) بالطلب
+// إرفاق إثبات التحويل (لقطة شاشة محفظة) بالطلب — فقط للحالات المفتوحة (لا خفض لمدفوع)
 export async function attachProof(id, tenantId, proof) {
-  const row = await tenantDb(tenantId).order.update({
-    where: { id },
+  const r = await tenantDb(tenantId).order.updateMany({
+    where: { id, status: { in: OPEN_STATUSES } },
     data: { proof, status: "proof_received" },
-  }).catch(() => null);
-  return rowToOrder(row);
+  }).catch((e) => {
+    console.error(`  ☠️ عطل DB بإرفاق الإثبات ${id}: ${e?.message || e}`);
+    return { count: 0 };
+  });
+  if (!r?.count) return null;
+  return rowToOrder(await tenantDb(tenantId).order.findUnique({ where: { id } }).catch(() => null));
 }
 
 // حالات الطلبات المعلقة (تشمل قيد المراجعة اليدوية للإيصالات)
@@ -152,11 +155,15 @@ export async function findRecentPending(tenantId, phone, minutes = 30) {
 }
 
 // إلغاء كل الطلبات المفتوحة للرقم (نسيان/استبدال) — يرجع عدد الملغاة
+// عطل DB يرمي (لا 0 كاذباً — المتصل يرد "عطل مؤقت" بدل "ما عندك معلقة")
 export async function cancelOpenOrders(tenantId, phone) {
   const r = await tenantDb(tenantId).order.updateMany({
     where: { phone: normalizePhone(phone), status: { in: OPEN_STATUSES } },
     data: { status: "canceled" },
-  }).catch(() => ({ count: 0 }));
+  }).catch((e) => {
+    console.error(`  ☠️ عطل DB بإلغاء طلبات ${phone}: ${e?.message || e}`);
+    throw new Error("تعذر الوصول للطلبات تقنياً — حاول لاحقاً");
+  });
   return r?.count || 0;
 }
 
@@ -177,25 +184,39 @@ export function detectUserItem(tenant, userText) {
 }
 
 // تعليق الطلب للمراجعة اليدوية (إيصال مشبوه/غير مطابق) + حفظ نتيجة فحص الـ AI
+// فقط للحالات المفتوحة — طلب مدفوع/ملغي لا يُخفض للمراجعة (يرجع null)
 export async function markOrderReview(id, tenantId, review) {
-  const row = await tenantDb(tenantId).order.update({
-    where: { id },
+  const r = await tenantDb(tenantId).order.updateMany({
+    where: { id, status: { in: OPEN_STATUSES } },
     data: { proof: review || null, status: "pending_review" },
-  }).catch(() => null);
+  }).catch((e) => {
+    console.error(`  ☠️ عطل DB بتعليق الطلب ${id}: ${e?.message || e}`);
+    return { count: 0 };
+  });
+  if (!r?.count) return null;
+  const row = await tenantDb(tenantId).order.findUnique({ where: { id } }).catch(() => null);
   return rowToOrder(row);
 }
 
 // رفض الإيصال يدوياً بسبب مكتوب: يُسجَّل السبب بالطلب ويُخطر العميل (تغلق الحلقة)
+// يدمج المراجعة مع الإثبات الأصلي (يحفظ referenceNumber لكشف التكرار) + شرط الحالات المفتوحة
 export async function rejectOrder(id, tenantId, { reason, by }) {
   if (!reason || !String(reason).trim()) throw new Error("سبب الرفض مطلوب");
   const T = tenantDb(tenantId);
-  const proof = { review: { by: by || "acp", reason: String(reason).trim(), at: new Date().toISOString() } };
-  // ذري: updateMany بشرط status يمنع رفض طلب مدفوع/ملغي بين القراءة والكتابة.
-  // ملاحظة: proof يُستبدل هنا (لا دمج مع القديم) لتفادي سباق قراءة-تعديل-كتابة.
+  const current = await T.order.findFirst({ where: { id } }).catch((e) => {
+    console.error(`  ☠️ عطل DB بقراءة الطلب ${id}: ${e?.message || e}`);
+    return null;
+  });
+  if (!current) return null;
+  if (!["pending", "proof_received", "pending_review"].includes(current.status)) return null;
+  const proof = { ...(current.proof || {}), review: { by: by || "acp", reason: String(reason).trim(), at: new Date().toISOString() } };
   const r = await T.order.updateMany({
     where: { id, status: { in: ["pending", "proof_received", "pending_review"] } },
     data: { proof, status: "rejected" },
-  }).catch(() => ({ count: 0 }));
+  }).catch((e) => {
+    console.error(`  ☠️ عطل DB برفض الطلب ${id}: ${e?.message || e}`);
+    return { count: 0 };
+  });
   if (!r?.count) return null;
   const row = await T.order.findUnique({ where: { id } }).catch(() => null);
   return rowToOrder(row);

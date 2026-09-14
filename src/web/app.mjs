@@ -13,7 +13,7 @@ function maskSecret(s) {
 
 import { PORT, WEBHOOK_VERIFY_TOKEN, WHATSAPP_PHONE_ID, AI_PROVIDER, AI_MODEL, ADMIN_USER, ADMIN_PASS, META_APP_SECRET } from "../config/env.mjs";
 import { listTenants } from "../../tenants.mjs";
-import { isDemoMode } from "../ai/kareem.mjs";
+import { isDemoMode } from "../ai/engine.mjs";
 import { db } from "../../db.mjs";
 import { adminAuth, adminRateLimit, scopeClient, csrfGuard } from "./middleware.mjs";
 import { replayInflightWebhooks } from "./routes/webhook.mjs";
@@ -47,7 +47,7 @@ export function createApp() {
       req.rawBody = buf;
     },
   }));
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.urlencoded({ extended: true, limit: "100kb" }));
   // حماية تغيير الحالة من أصول أجنبية (يُطبق قبل كل المسارات)
   app.use(csrfGuard);
   // أصول محلية (Tailwind مُضمّن — لا سكربتات خارجية حية داخل الكونسول)

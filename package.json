@@ -1,7 +1,7 @@
 {
   "name": "wasl-command-center",
   "version": "1.0.0",
-  "description": "Wasl Command Center — منصة واتساب متعددة البوتات (بوت كريم التجريبي مدمج)",
+    "description": "Wasl Command Center - منصة واتساب متعددة البوتات",
   "type": "module",
   "engines": {
     "node": ">=20"

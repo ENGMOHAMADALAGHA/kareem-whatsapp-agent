@@ -97,6 +97,12 @@ export async function sendWithWindowFallback(to, text, tenant) {
   }
   try {
     const r = await sendWhatsAppMessage(to, text, tenant);
+    // وضع المحاكاة (بلا توكن) ليس إرسالاً — نعيده كغير مرسل بصراحة
+    // حتى لا تُعلَّم التذكيرات والبثوث "تمت" وهي لم تخرج من الخادم
+    if (r?.simulated) {
+      console.log(`  📤 [محاكاة] لم يخرج شيء لـ ${to} — يُعامل كغير مرسل`);
+      return { ok: false, reason: "simulated-no-credentials" };
+    }
     return { ok: true, result: r };
   } catch (e) {
     if (e?.code !== "WINDOW_CLOSED") throw e;

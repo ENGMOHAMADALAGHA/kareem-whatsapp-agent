@@ -1,5 +1,5 @@
 // معالج الذكاء: أزرار المنتجات + مسار AI العادي (تصعيد + طلب + إرسال ذكي)
-import { processCustomerMessage } from "../../../../ai/kareem.mjs";
+import { processCustomerMessage } from "../../../../ai/engine.mjs";
 import { sendWhatsAppMessage, sendButtons, sendImage, defaultButtonsFor } from "../../../../whatsapp/sender.mjs";
 import { getHistory, pushHistory } from "../../../../memory/conversations.mjs";
 import { notifyStaff } from "../../../../compliance/messaging.mjs";

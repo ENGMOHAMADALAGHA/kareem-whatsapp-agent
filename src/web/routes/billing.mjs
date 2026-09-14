@@ -15,12 +15,23 @@ export async function finalizePaidOrder(orderId, source = "manual", opts = {}) {
   if (!order) throw new Error("الطلب غير موجود");
   if (order.status === "paid") return { already: true, order };
   const { tenantDb } = await import("../../security/tenantGuard.mjs");
-  const claimed = await tenantDb(order.tenantId).order.updateMany({
-    where: { id: order.id, status: { not: "paid" } },
-    data: { status: "paid", paidAt: new Date() },
-  }).catch(() => ({ count: 0 }));
+  // ذري + مشروط بالحالات القابلة للدفع فقط: ملغي/مرفوض لا يُحيى كمدفوع أبداً
+  let claimed;
+  try {
+    claimed = await tenantDb(order.tenantId).order.updateMany({
+      where: { id: order.id, status: { notIn: ["paid", "canceled", "rejected"] } },
+      data: { status: "paid", paidAt: new Date() },
+    });
+  } catch (e) {
+    // عطل تقني ≠ محسوم: نرمي بدل إرجاع already كاذب (المتصل يحوّل للمراجعة/500)
+    console.error(`  ☠️ عطل DB بتثبيت الدفع ${order.id}: ${e?.message || e}`);
+    throw new Error("تعذر تثبيت الدفع تقنياً — لم يُحسم شيء");
+  }
   if (!claimed || claimed.count === 0) {
     const fresh = await getPublicOrder(orderId);
+    if (fresh && fresh.status !== "paid") {
+      throw new Error(`الطلب ${orderId} بحالة "${fresh.status}" — لا يمكن تأكيده كمدفوع`);
+    }
     return { already: true, order: fresh || order };
   }
   logEvent("order_paid", {
@@ -39,7 +50,7 @@ export async function finalizePaidOrder(orderId, source = "manual", opts = {}) {
   const tenant = await getTenantFull(order.tenantId);
   // opts.csat=false عندما يرسل المتصل رسالته الخاصة (تأكيد الموظف) — بلا رسالتين
   if (tenant && opts.csat !== false) {
-    const msg = `شكراً لثقتك يا بطل! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
+    const msg = `شكراً لثقتك يا غالي! 🙏 قيّم تجربتك معنا من 1 (سيئة) إلى 5 (ممتازة) — ابعت الرقم فقط.`;
     await requestCsat(order.tenantId, order.phone, order.id);
     try {
       // داخل النافذة ترسل حرة؛ إن كانت مغلقة تُعاد عبر القالب المعتمد (متابعة لاحقة)

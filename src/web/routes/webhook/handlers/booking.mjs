@@ -88,10 +88,11 @@ export async function handleBooking(ctx) {
     logEvent("triage", { tenantId: tenant.id, phone: from, emergency: red, summary: summary.slice(0, 300) }).catch(() => {});
     if (red) {
       await setBookingState(tenant.id, from, null);
-      // موعد طوارئ فريد: تاريخ اليوم بمنطقة الأردن + وقت فوري (يسمح بحالات طوارئ متعددة باليوم نفسه)
-      const now = new Date();
-      const day = ammanDateStr(0);
-      const slot = `طوارئ فوري ${now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+              // موعد طوارئ فريد: تاريخ اليوم بمنطقة الأردن + وقت فوري بالثواني
+              // (الدقيقة وحدها تتصادم على القيد الفريد @@unique عند حالتين بنفس الدقيقة)
+              const now = new Date();
+              const day = ammanDateStr(0);
+              const slot = `طوارئ فوري ${now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
       try {
         const booking = await bookAppointment({ tenantId: tenant.id, phone: from, name, service: "حالة طارئة 🆘", day, slot });
         const reply = `سلامتك أولاً يا غالي 🆘 الأعراض اللي ذكرتها تحتاج تدخل سريع — حجزتلك موعد طارئ اليوم (${booking.id}). تعال مباشرة على العيادة، والدكتور بانتظارك. إذا الوضع خطير اتصل فينا فوراً.`;

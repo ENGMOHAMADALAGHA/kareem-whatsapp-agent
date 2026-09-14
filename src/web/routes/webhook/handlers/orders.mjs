@@ -11,7 +11,23 @@ export async function handleCancelIntent(ctx) {
   // تُلغى كل الطلبات المفتوحة فوراً ولا يُنشأ طلب بهذه الدورة (الذكاء يرد محادثة نظيفة)
   if (/(انسى|انس|أنسى|الغي|ألغي|الغاء|إلغاء|الغى|كنسل|كنسله|بلا.*طلب|ما بدي.*طلب|لا.*طلب جديد|امسح.*طلب|من غير طلب)/.test(text)) {
     const { cancelOpenOrders } = await import("../../../../../orders.mjs");
-    const killed = await cancelOpenOrders(tenant?.id, from).catch(() => 0);
+    let killed;
+    try {
+      killed = await cancelOpenOrders(tenant?.id, from);
+    } catch (e) {
+      // عطل تقني — لا ندعي "ما عندك معلقة" كذباً
+      const reply = `عذراً يا غالي 🙏 تعذر الوصول لطلباتك هلا لعطل مؤقت. ابعت "أريد موظف" للمساعدة الفورية.`;
+      await pushHistory(from, "user", text, tenant);
+      await pushHistory(from, "assistant", reply, tenant);
+      try {
+        await sendWhatsAppMessage(from, reply, tenant);
+      } catch (se) {
+        console.error(`  ❌ فشل الإرسال: ${se.message}`);
+      }
+      console.log(`  ☠️ فشل نسيان طلبات ${from}: ${e.message}`);
+      console.log(`${"─".repeat(60)}\n`);
+      return true;
+    }
     const reply = killed > 0
       ? `تمام يا غالي ✅ نسيت الطلبات المعلقة (${killed}). ابعت طلبك الجديد وأنا جاهز 👟`
       : `ما عندك طلبات معلقة يا غالي 😊 ابعت طلبك الجديد وأنا جاهز 👟`;
@@ -65,7 +81,7 @@ export async function handleCsat(ctx) {
   const score = Number(text.trim());
   const rating = await saveRating({ tenantId: tenant.id, phone: from, score, refId: pending.refId });
   const reply = score >= 4
-    ? `شكراً يا بطل! ⭐ تقييمك ${score}/5 أسعدنا ونوره يتقدم.`
+    ? `شكراً يا غالي! ⭐ تقييمك ${score}/5 أسعدنا ونوره يتقدم.`
     : `شكراً لصراحتك يا غالي 🙏 تقييمك ${score}/5 وصلنا ورح نشتغل نحسّن. تحب يحكي معك موظف؟`;
   await pushHistory(from, "user", text, tenant);
   await pushHistory(from, "assistant", reply, tenant);

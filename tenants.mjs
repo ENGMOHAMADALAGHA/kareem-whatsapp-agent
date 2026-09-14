@@ -172,6 +172,12 @@ export async function updateTenant(id, data) {
   }
   if (clean.plan !== undefined) clean.plan = cleanPlan(clean.plan);
   if (clean.trialEndsAt !== undefined) clean.trialEndsAt = cleanTrialDate(clean.trialEndsAt);
+  // تجربة خالدة مرفوضة: trialEndsAt=null مع خطة trial = تجربة لا تنتهي —
+  // null مسموح فقط للخطط المدفوعة، وإلا تُمنح 14 يوماً افتراضياً
+  if (clean.trialEndsAt === null && (clean.plan || "trial") === "trial") {
+    const row = await systemDb("tenants:trial-check").tenant.findUnique({ where: { id }, select: { plan: true } }).catch(() => null);
+    if (!row || (row.plan || "trial") === "trial") clean.trialEndsAt = defaultTrialEnd();
+  }
   const updated = await systemDb("tenants:update").tenant.update({ where: { id }, data: clean });
   invalidate();
   return updated;
