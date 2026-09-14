@@ -84,13 +84,18 @@ function wrapModel(delegate, model, tenantId) {
       }
       if (op === "upsert") {
         return async (args = {}) => {
-          // upsert ذري بالنطاق: where + update مسكوبان بـ tenantId —
-          // لا يمكن خطف سجل من نطاق آخر عبر where مكرر.
-          const scoped = { ...(args.where || {}), tenantId };
+          // where يُمرَّر كما هو (Prisma يشترط unique نقي: {id} أو {tenantId_phone} —
+          // أي حقن لـ tenantId بجانبه يرمي validation error).
+          // الأمان عبر فحص مسبق: tenantId الصف لا يتغير أبداً، فلا نافذة سباق حقيقية —
+          // سجل نطاق آخر يُرفض قبل أي كتابة، والإنشاء يُسكب بالنطاق.
+          const existing = await target.findUnique({ where: args.where }).catch(() => null);
+          if (existing && existing.tenantId !== tenantId) {
+            const e = new Error("السجل غير موجود في نطاقك");
+            e.code = "TENANT_DENIED";
+            throw e;
+          }
           return fn.call(target, {
             ...args,
-            where: scoped,
-            update: { ...(args.update || {}), tenantId },
             create: scopedData(tenantId, args.create),
           });
         };

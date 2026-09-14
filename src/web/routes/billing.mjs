@@ -1,6 +1,6 @@
 import { getPublicOrder, markOrderPaid, fmtMoney } from "../../../orders.mjs";
 import { getTenantFull } from "../../../tenants.mjs";
-import { sendWithWindowFallback } from "../compliance/messaging.mjs";
+import { sendWithWindowFallback } from "../../compliance/messaging.mjs";
 import { pushHistory } from "../../memory/conversations.mjs";
 import { requestCsat } from "../../../engage.mjs";
 import { logEvent } from "../../../crm.mjs";
@@ -29,7 +29,7 @@ export async function finalizePaidOrder(orderId, source = "manual", opts = {}) {
   }).catch(() => {});
   // المالك يتفرج من واتسابه: إشعار فوري بالدفع المؤكد
   try {
-    const { notifyOwner } = await import("../compliance/messaging.mjs");
+    const { notifyOwner } = await import("../../compliance/messaging.mjs");
     notifyOwner(
       await getTenantFull(order.tenantId),
       "payment",

@@ -91,15 +91,7 @@ export function createApp() {
     });
   });
 
-  app.get("/admin/", (req, res) => {
-    res.sendFile(path.join(__dirname, "..", "..", "admin.html"));
-  });
-
-  // ── بوابة العميل: واجهة GUI مستقلة (client.html) مقفلة على بوته ──
-  app.get("/portal/", (req, res) => {
-    res.sendFile(path.join(__dirname, "..", "..", "client.html"));
-  });
-
+  // صفحتا /admin/ و /portal/ تُسجَّلان من admin/pages.mjs (مصدر واحد — بلا تكرار)
   registerAdminRoutes(app);
   registerPortalRoutes(app);
   registerWebhookRoutes(app);

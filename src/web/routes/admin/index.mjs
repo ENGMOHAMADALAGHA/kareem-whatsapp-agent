@@ -1,5 +1,5 @@
 // فهرس راوترات /admin — كل مجموعة في ملف مستقل بمسؤولية واحدة
-// كان ملفاً واحداً (725 سطر / 38 راوت) — الآن 6 ملفات ~100-200 سطر لكل منها.
+// كان ملفاً واحداً (725 سطر / 40 راوت) — الآن 6 ملفات ~100-200 سطر لكل منها.
 import { registerTenantRoutes } from "./tenants.mjs";
 import { registerBookingRoutes } from "./bookings.mjs";
 import { registerOrderRoutes } from "./orders.mjs";

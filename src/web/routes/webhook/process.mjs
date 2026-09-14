@@ -90,9 +90,7 @@ export async function processWebhookBody(body) {
           console.log(`  🧠 الذاكرة: ${(await getHistory(from, tenant)).length} رسائل سابقة`);
 
           // أزرار منتجات كريم قبل الفرز (كما كانت)
-          if (await handleProductButtons(ctx)) continue;
-
-          // طاقم + takeover قبل أي منطق تجاري
+          // ملاحظة الترتيب الأصلي: الطاقم/takeover أولاً — زر الشراء لا يتجاوز إسكات "قف"
           if (await handleStaff(ctx)) continue;
 
           // طلبات: نسيان + استعلام + تقييم
@@ -103,6 +101,8 @@ export async function processWebhookBody(body) {
           // —— تدفق الحجز (للعيادات) قبل الـ AI ——
           ctx.wantsBooking = tenant?.features?.booking && /(حجز|موعد|احجز|book|appointment)/i.test(ctx.text + " " + (buttonId || ""));
           ctx.bookingState = await getBookingState(tenant?.id, from);
+          // أزرار منتجات كريم (بعد الطلبات وقبل الفرز — كما كانت أصلاً — وتحترم takeover)
+          if (await handleProductButtons(ctx)) continue;
           if (await handleBooking(ctx)) continue;
 
           // —— المسار العادي: AI ——
