@@ -1,5 +1,6 @@
 import { systemDb } from "./src/security/tenantGuard.mjs";
 import { decryptSecret, encryptSecret } from "./src/security/secrets.mjs";
+import { SHARED_NUMBER_TENANT_ID } from "./src/config/env.mjs";
 
 // كاش قصير للبوتات (تتغير نادراً)
 let cache = { data: null, at: 0 };
@@ -74,6 +75,14 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
     // لا أفضلية لأي بوت؛ كل البوتات سواسية داخل منصة وصل.
     const matches = tenants.filter((t) => t.phoneNumberId && t.phoneNumberId === phoneNumberId);
     if (matches.length > 1) {
+      // رقم مشترك = خطأ إعداد (رقم واحد لكل بوت). fail-closed افتراضياً.
+      // استثناء معلن واحد: SHARED_NUMBER_TENANT_ID (وضع قائم مؤقت حتى فصل الأرقام) —
+      // يُسجَّل بصوت عالٍ في كل مرة حتى لا يبقى صامتاً.
+      const designated = SHARED_NUMBER_TENANT_ID && matches.find((t) => t.id === SHARED_NUMBER_TENANT_ID);
+      if (designated) {
+        console.error(`  ⛔ رقم مشترك ${phoneNumberId} على ${matches.map((t) => t.id).join("، ")} — توجيه مؤقت معلن إلى "${designated.id}" (SHARED_NUMBER_TENANT_ID). افصل الأرقام فوراً: رقم واحد لكل بوت`);
+        return withEnvDefaults(designated);
+      }
       console.error(`  ⛔ رقم مشترك مرفوض: ${phoneNumberId} مسجَّل عند ${matches.map((t) => t.id).join("، ")} — أزل التكرار من /admin/tenants (رقم واحد لكل بوت)`);
       return null;
     }

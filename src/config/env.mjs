@@ -18,6 +18,9 @@ export const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 export const ADMIN_USER = process.env.ADMIN_USER || "";
 export const ADMIN_PASS = process.env.ADMIN_PASS || "";
 export const JWT_SECRET = process.env.JWT_SECRET || "";
+// مخرج طوارئ مؤقت لرقم مشترك: id البوت المالك للرقم (يُستخدم فقط عند تكرار الرقم).
+// الوضع الصحيح: رقم واحد لكل بوت (assertPhoneUnique يمنع الجديد) — هذا للوضع القائم فقط حتى يُفصل.
+export const SHARED_NUMBER_TENANT_ID = process.env.SHARED_NUMBER_TENANT_ID || "";
 export const TOKEN_ENC_KEY = process.env.TOKEN_ENC_KEY || "";
 
 export const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://kareem-whatsapp-agent.onrender.com";
