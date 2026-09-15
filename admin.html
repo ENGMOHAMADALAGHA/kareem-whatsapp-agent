@@ -7,8 +7,8 @@
 <script src="/assets/tailwind.js"></script>
 <style>
   .tab-btn.active { background: #1d4ed8; color: #fff; }
-  .msg-user { background: #dcfce7; margin-left: auto; }
-  .msg-assistant { background: #f1f5f9; margin-right: auto; }
+  .msg-user { background: #ede9fe; border: 1px solid #ddd6fe; margin-left: auto; border-radius: 1rem 1rem .25rem 1rem; }
+  .msg-assistant { background: #f8fafc; border: 1px solid #e2e8f0; margin-right: auto; border-radius: 1rem 1rem 1rem .25rem; }
   .blink { animation: bl 1s infinite; }
   @keyframes bl { 50% { opacity: .4; } }
 
@@ -266,18 +266,18 @@
 
   <!-- Inbox -->
   <div id="tab-inbox" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    <div class="bg-white rounded shadow p-3">
-      <h3 class="font-bold mb-2">المحادثات <span id="inboxCount" class="text-xs text-slate-500"></span></h3>
+    <div class="bg-white rounded-xl shadow p-3 border border-slate-200">
+      <h3 class="font-bold mb-2 flex items-center gap-2">المحادثات <span id="inboxCount" class="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full"></span></h3>
       <div id="convList" class="space-y-2 max-h-[60vh] overflow-auto"></div>
     </div>
-    <div class="bg-white rounded shadow p-3 md:col-span-2 flex flex-col">
+    <div class="bg-white rounded-xl shadow p-3 md:col-span-2 flex flex-col border border-slate-200">
       <div class="flex items-center gap-2 mb-2">
         <h3 id="convTitle" class="font-bold">اختر محادثة</h3>
-        <button id="takeoverBtn" class="hidden text-xs px-2 py-1 rounded bg-amber-100">⏸️ إيقاف للموظف</button>
+        <button id="takeoverBtn" class="hidden text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800 font-bold border border-amber-200">⏸️ إيقاف للموظف</button>
       </div>
-      <div id="convMsgs" class="flex-1 space-y-2 max-h-[50vh] overflow-auto mb-2"></div>
+      <div id="convMsgs" class="flex-1 space-y-2 max-h-[50vh] overflow-auto mb-2 bg-slate-50 rounded-xl p-3 border border-slate-100"></div>
       <div class="flex gap-2">
-        <input id="replyInput" class="flex-1 border rounded p-2" placeholder="رد الموظف...">
+        <input id="replyInput" class="flex-1 field" placeholder="رد الموظف...">
         <button id="replyBtn" class="wbtn wbtn-p">إرسال</button>
       </div>
     </div>
@@ -724,13 +724,14 @@ async function loadInbox() {
   box.innerHTML = "";
   j.inbox.forEach((c) => {
     const d = document.createElement("div");
-    d.className = "border rounded p-2 cursor-pointer hover:bg-slate-50" + (c.phone === cur.phone ? " border-blue-500" : "");
+    const sel = c.phone === cur.phone;
+    d.className = "border rounded-xl p-2.5 cursor-pointer transition " + (sel ? "border-violet-400 bg-violet-50 shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300");
     const title = document.createElement("div");
-    title.className = "font-bold";
+    title.className = "font-bold text-sm";
     title.textContent = (c.phone || "") + (c.takeover ? " ⏸️" : "");
     const sub = document.createElement("div");
-    sub.className = "text-xs text-slate-500";
-    sub.textContent = (c.lastMessage ? c.lastMessage.text : "");
+    sub.className = "text-xs text-slate-500 truncate";
+    sub.textContent = (c.lastMessage ? c.lastMessage.text : "— لا رسائل");
     d.append(title, sub);
     d.onclick = () => { cur.phone = c.phone; loadConv(); loadInbox(); };
     box.appendChild(d);
@@ -857,33 +858,42 @@ async function loadOrders() {
   const j = await api("/admin/orders?tenant=" + encodeURIComponent(cur.tenant));
   const box = $("ordersList");
   box.innerHTML = "";
-  if (!j.orders.length) { box.innerHTML = "<p class='text-slate-400'>لا طلبات</p>"; return; }
+  if (!j.orders.length) { box.innerHTML = "<p class='wempty'>لا طلبات — ستظهر طلبات عملائك هنا</p>"; return; }
   j.orders.forEach((o) => {
     const d = document.createElement("div");
-    d.className = "border rounded p-2 text-sm";
-    const b = document.createElement("b"); b.textContent = o.id; d.appendChild(b);
-    d.appendChild(document.createTextNode(" — " + o.phone + " — " + money(o.total, o.currency) + " — " + (O_STATUS_AR[o.status] || o.status)));
+    d.className = "border border-slate-200 rounded-xl p-3 bg-white hover:shadow-md hover:border-violet-200 transition text-sm";
+    const head = document.createElement("div");
+    head.className = "flex items-center gap-2 flex-wrap";
+    const b = document.createElement("b"); b.className = "text-violet-700"; b.textContent = o.id; head.appendChild(b);
+    const pill = document.createElement("span");
+    pill.className = "text-xs px-2 py-0.5 rounded-full font-bold border " + (o.status === "paid" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : o.status === "pending_review" || o.status === "proof_received" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-600 border-slate-200");
+    pill.textContent = O_STATUS_AR[o.status] || o.status; head.appendChild(pill);
+    head.appendChild(document.createTextNode(" • " + o.phone + " • " + money(o.total, o.currency)));
+    d.appendChild(head);
     if (o.proof) {
       if (o.proof.mediaId) {
         const btn = document.createElement("button");
-        btn.className = "text-blue-600 text-xs font-bold mx-1"; btn.textContent = "🖼️ فتح الإيصال";
+        btn.className = "wbtn wbtn-s text-xs py-1"; btn.textContent = "🖼️ فتح الإيصال";
         btn.onclick = () => openReceipt(o.id);
-        d.appendChild(document.createTextNode(" ")); d.appendChild(btn);
+        d.appendChild(btn);
       }
       d.appendChild(proofSummary(o));
     }
+    const actions = document.createElement("div");
+    actions.className = "flex gap-1 mt-2 flex-wrap";
     if (o.status === "pending" || o.status === "proof_received" || o.status === "pending_review") {
       const btn = document.createElement("button");
-      btn.className = "text-green-600 text-xs font-bold"; btn.textContent = " ✔ تأكيد الدفع";
+      btn.className = "wbtn wbtn-ok text-xs py-1"; btn.textContent = "✔ تأكيد الدفع";
       btn.onclick = () => confirmOrder(o.id);
-      d.appendChild(document.createTextNode(" ")); d.appendChild(btn);
+      actions.appendChild(btn);
     }
     if (o.status === "proof_received" || o.status === "pending_review") {
       const btn = document.createElement("button");
-      btn.className = "text-red-600 text-xs font-bold mx-1"; btn.textContent = " ❌ رفض الإيصال";
+      btn.className = "wbtn wbtn-warn text-xs py-1"; btn.textContent = "❌ رفض الإيصال";
       btn.onclick = () => rejectOrder(o.id, o.phone);
-      d.appendChild(btn);
+      actions.appendChild(btn);
     }
+    if (actions.children.length) d.appendChild(actions);
     box.appendChild(d);
   });
 }
