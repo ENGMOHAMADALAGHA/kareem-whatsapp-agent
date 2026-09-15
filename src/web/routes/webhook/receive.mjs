@@ -3,15 +3,18 @@
 import { verifyMetaSignature } from "../../middleware.mjs";
 import { webhookQueue } from "../../../jobs/queue.mjs";
 import { storeGet, storeSet, storeDel, storeKeys } from "../../../../store.mjs";
+import { channelForWebhookObject } from "../../../channels/registry.mjs";
 import { processWebhookBody } from "./process.mjs";
 
 export function registerReceiveRoute(app) {
   app.post("/webhook", verifyMetaSignature, async (req, res) => {
     const body = req.body;
 
-    // التحقق المبدئي من نوع الحدث
-    if (!body || body.object !== "whatsapp_business_account") {
-      console.log(`  📥 POST /webhook - object غير متوقع: ${body?.object}`);
+    // التحقق المبدئي من نوع الحدث عبر طبقة القنوات (وصل: واتساب/ماسنجر/انستغرام)
+    // حالياً whatsapp فقط — غيرها 404 صريح حتى تُفعَّل قناته
+    const channelId = channelForWebhookObject(body?.object);
+    if (channelId !== "whatsapp") {
+      console.log(`  📥 POST /webhook - object غير مدعوم بعد: ${body?.object} (القنوات الجاهزة: whatsapp)`);
       return res.sendStatus(404);
     }
 

@@ -8,8 +8,10 @@ import { fmtMoney } from "../../../../../orders.mjs";
 import { logEvent } from "../../../../../crm.mjs";
 
 export async function handleVoice(ctx) {
-  const { msg, from, tenant, text } = ctx;
-  if (!((msg.type === "audio" || msg.audio?.id) && !text)) return false;
+  const { msg, from, tenant, text, channel } = ctx;
+  // نوع الوسائط عبر القناة (واتساب/ماسنجر/انستغرام) — نفس الشروط السابقة
+  const media = channel?.extractMedia ? channel.extractMedia(msg) : null;
+  if (!((media?.kind === "audio" || msg.type === "audio" || msg.audio?.id) && !text)) return false;
   try {
     const mediaId = msg.audio?.id;
     console.log(`  🎤 فويس من ${from} (media=${mediaId}) - جاري التفريغ...`);
@@ -35,12 +37,13 @@ export async function handleVoice(ctx) {
 }
 
 export async function handleReceiptImage(ctx) {
-  const { msg, from, tenant, text } = ctx;
-  if (!((msg.type === "image" || msg.image?.id || msg.type === "document" || msg.document?.id) && !text)) return false;
-  const mediaId = msg.image?.id || msg.document?.id;
-  const mimeType = msg.document?.mime_type || "image/jpeg";
+  const { msg, from, tenant, text, channel } = ctx;
+  const media = channel?.extractMedia ? channel.extractMedia(msg) : null;
+  if (!((media?.kind === "image" || media?.kind === "document" || msg.type === "image" || msg.image?.id || msg.type === "document" || msg.document?.id) && !text)) return false;
+  const mediaId = media?.id || msg.image?.id || msg.document?.id;
+  const mimeType = media?.mimeType || msg.document?.mime_type || "image/jpeg";
   // الكابشن قد يحمل رقم الطلب — يُمرر للربط الدقيق بدل الأحدث دائماً
-  const caption = msg.image?.caption || msg.document?.caption || msg.document?.filename || "";
+  const caption = media?.caption || msg.image?.caption || msg.document?.caption || msg.document?.filename || "";
   const { handleReceiptImage } = await import("../../../../media/paymentProof.mjs");
   const res = await handleReceiptImage({ tenant, phone: from, mediaId, mimeType, caption });
   if (res.outcome === "no-tenant") {

@@ -179,7 +179,46 @@ test("signClientToken: انتهاء 12h (43200 ثانية)", async () => {
   assert.equal(payload.exp - payload.iat, 12 * 60 * 60);
 });
 
-// ── المنصة: لا بوت افتراضي صامت + أزرار من بيانات البوت ──
+// ── القنوات: سجل + محوّل واتساب (نفس السلوك) + stubs صريحة ──
+test("channels: الثلاث معرفة، والمجهول يرمي، والـ stubs صريحة", async () => {
+  const { getChannel, channelIds, channelForWebhookObject } = await import("../src/channels/registry.mjs");
+  assert.deepEqual(channelIds().sort(), ["instagram", "messenger", "whatsapp"]);
+  assert.equal(getChannel("whatsapp").id, "whatsapp");
+  assert.throws(() => getChannel("telegram"), /غير معروف/);
+  assert.equal(channelForWebhookObject("whatsapp_business_account"), "whatsapp");
+  assert.equal(channelForWebhookObject("page"), "messenger");
+  assert.equal(channelForWebhookObject("instagram"), "instagram");
+  assert.equal(channelForWebhookObject("nope"), null);
+  const mg = getChannel("messenger");
+  try {
+    mg.sendText("x", "y", {});
+    assert.fail("يجب أن يرمي CHANNEL_NOT_READY");
+  } catch (e) {
+    assert.equal(e.code, "CHANNEL_NOT_READY");
+  }
+  assert.equal(mg.normalizeSender("123"), "msg:123");
+  const ig = getChannel("instagram");
+  assert.equal(ig.normalizeSender("456"), "ig:456");
+});
+test("channels/whatsapp: استخراج نص/زر/اسم ووسائط وتطبيع المرسل", async () => {
+  const { getChannel } = await import("../src/channels/registry.mjs");
+  const ch = getChannel("whatsapp");
+  const t = ch.extractText(
+    { text: { body: "مرحبا" }, interactive: { button_reply: { id: "buy_shoes", title: "شراء" } } },
+    [{ wa_id: "962790000000", profile: { name: "أحمد" } }],
+    "962790000000"
+  );
+  assert.equal(t.text, "مرحبا");
+  assert.equal(t.buttonId, "buy_shoes");
+  assert.equal(t.name, "أحمد");
+  assert.equal(ch.receiverId({ metadata: { phone_number_id: "P1" } }), "P1");
+  assert.equal(ch.extractMedia({ type: "audio", audio: { id: "A1" } }).kind, "audio");
+  const img = ch.extractMedia({ type: "image", image: { id: "I1", caption: "ord_abc" } });
+  assert.equal(img.kind, "image");
+  assert.equal(img.caption, "ord_abc");
+  assert.equal(ch.extractMedia({ type: "text", text: { body: "x" } }), null);
+  assert.equal(ch.normalizeSender("0790000000"), "962790000000");
+});
 test("platform: resolveTenantInput(null) → null (لا افتراضي صامت)", async () => {
   const { resolveTenantInput } = await import("../tenants.mjs");
   assert.equal(await resolveTenantInput(null), null);

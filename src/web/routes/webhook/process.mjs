@@ -1,7 +1,7 @@
 // الموزع الرئيسي: حلقة entries/changes/messages + درع لكل رسالة + ترتيب المعالجات
 // الترتيب محفوظ كما كان في webhook.mjs الأصلي — أي تغيير بالترتيب يغير السلوك.
 import { resolveTenant } from "../../../../tenants.mjs";
-import { normalizePhone } from "../../../utils/phone.mjs";
+import { getChannel } from "../../../channels/registry.mjs";
 import { checkLimit, senderKey } from "../../../security/rateLimit.mjs";
 import { getHistory, isDuplicateMessageAsync } from "../../../memory/conversations.mjs";
 import { getBookingState } from "../../../../bookings.mjs";
@@ -51,25 +51,22 @@ export async function processWebhookBody(body) {
 
           // درع لكل رسالة على حدة: تعثّر رسالة ما يجب ألا يُسقط باقي دفعة Meta
           try {
+          // الاستخراج عبر طبقة القنوات (وصل: واتساب/ماسنجر/انستغرام) — نفس السلوك، مصدر واحد
+          const ch = getChannel("whatsapp");
           // استخراج رقم العميل ونص الرسالة (يدعم الأزرار + الفويس)
-          const from = normalizePhone(msg.from); // رقم العميل — موحد E.164 دائماً
+          const from = ch.normalizeSender(msg.from); // رقم العميل — موحد E.164 دائماً
           // حد المعدل: 30 رسالة/دقيقة لكل رقم (حماية من الحلقات وتكلفة AI)
           const rl = checkLimit(senderKey(from), 30, 60 * 1000);
           if (!rl.allowed) {
             console.warn(`  ⏱️ تجاوز الحد من ${from} — تم التجاهل (${rl.retryAfter}ث)`);
             continue;
           }
-          let text =
-            msg.text?.body ||
-            msg.button?.text ||
-            msg.interactive?.button_reply?.title ||
-            msg.interactive?.button_reply?.id ||
-            msg.interactive?.list_reply?.title ||
-            "";
-          const buttonId = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || null;
-          const name = contacts.find((c) => c.wa_id === from)?.profile?.name || from;
+          const extracted = ch.extractText(msg, contacts, from);
+          let text = extracted.text;
+          const buttonId = extracted.buttonId;
+          const name = extracted.name;
 
-          const ctx = { msg, contacts, tenant, from, name, text, buttonId, result: null, wantsBooking: false, bookingState: null };
+          const ctx = { msg, contacts, tenant, from, name, text, buttonId, channel: ch, result: null, wantsBooking: false, bookingState: null };
 
           // وسائط: فويس (يحوّل لنص ويكمل) + صور إيصالات (تعالج وتغلق)
           if (await handleVoice(ctx)) continue;
