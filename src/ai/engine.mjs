@@ -158,27 +158,92 @@ function mockReply(userMessage) {
   };
 }
 
-// رد بديل عام لبقية البوتات (عيادات/خدمات) — لا نُسرب كتالوج كريم أبداً خارج متجره
+// رد بديل عام لكل بوتات المنصة — ذكي ومحايد، يبني رده من بيانات البوت فقط
+// لا نُسرب كتالوج أي بوت لآخر، ولا لهجة بوت لآخر
 function fallbackReplyFor(tenant, userMessage) {
   const msg = String(userMessage || "").toLowerCase();
-  const name = tenant?.botName || tenant?.id || "البوت";
-  if (tenant?.features?.booking) {
-    if (/موعد|حجز|احجز|book|appointment/.test(msg)) {
+  const name = tenant?.botName || tenant?.name || "فريقنا";
+  const prods = tenant?.products || [];
+  const prodsTxt = prods.map((p) => `${p.name} (${p.price} د.أ)`).join("، ");
+  const fee = tenant?.deliveryFee ? `+ ${tenant.deliveryFee} د.أ توصيل` : "";
+  const bookingOn = !!tenant?.features?.booking;
+  const tone = tenant?.tone || "ودود ومهني";
+
+  // شفافية
+  if (/(هل انت|هل أنت|بوت|روبوت|ذكاء اصطناعي|are you ai|are you bot)/.test(msg)) {
+    return {
+      reply: `يا هلا فيك 😊 نعم أنا ${name} مساعد ذكي آلي هنا لخدمتك — ${tone}. كيف أساعدك اليوم؟`,
+      transfer_to_human: false,
+      intent: "استفسار",
+    };
+  }
+  // تصعيد
+  if (/(اريد.*موظف|أريد.*موظف|اكلم.*موظف|أكلم.*موظف|انسان|إنسان|بشري|خدمة عملاء|موظف)/.test(msg)) {
+    return {
+      reply: `أكيد، بلغت فريق ${name} ورح يتواصل معك قريباً 🙏 شكراً لصبرك.`,
+      transfer_to_human: true,
+      intent: "تصعيد",
+    };
+  }
+  // اعتراض سعري — رد عام يبني من منتجات البوت نفسه
+  if (/(غالي|كثير|سعر مرتفع|خصم|تخفيض|ما تقدر تنقص)/.test(msg)) {
+    if (prods.length) {
+      const cheapest = [...prods].sort((a, b) => a.price - b.price)[0];
       return {
-        reply: `يا هلا فيك يا غالي 🌸 اهلاً بك في ${name}. احجز موعدك بكلمة "حجز" أو انضم لقائمتنا بـ"انتظار".`,
+        reply: `أتفهمك تماماً 🙏 كل منتجاتنا مختارة بعناية وقيمتها تستاهل. كخيار اقتصادي عندنا ${cheapest.name} بـ ${cheapest.price} د.أ ${fee}. تحب أثبته لك؟`,
+        transfer_to_human: false,
+        intent: "اعتراض_على_السعر",
+      };
+    }
+    return {
+      reply: `أتفهم ملاحظتك 🙏 خبرنا شو الميزانية المناسبة لك ونوجهك لأفضل خيار.`,
+      transfer_to_human: false,
+      intent: "اعتراض_على_السعر",
+    };
+  }
+  // شراء — يلتقط اسم المنتج من كلام العميل
+  if (/(اشتري|أشتري|اطلب|أطلب|اريد.*منتج|أريد.*منتج|بدي|احجز.*شراء|موافق.*اطلب|ثبت.*طلب)/.test(msg)) {
+    const hit = prods.find((p) => p.name && msg.includes(p.name.split(" ")[0].toLowerCase()));
+    if (hit) {
+      const total = hit.price + (tenant?.deliveryFee || 0);
+      return {
+        reply: `ممتاز — ${hit.name} سعره ${hit.price} د.أ ${fee} = الإجمالي ${total} د.أ. أثبت لك الطلب؟`,
+        transfer_to_human: false,
+        intent: "شراء",
+      };
+    }
+    if (bookingOn) {
+      return {
+        reply: `تمام 🌸 احجز موعدك بكلمة "حجز" واختر الوقت المناسب.`,
         transfer_to_human: false,
         intent: "حجز_موعد",
       };
     }
     return {
-      reply: `يا هلا فيك 🌸 بنخدمك في ${name} 😊 احجز موعدك بكلمة "حجز"، أو ابعت "أريد موظف" للتواصل المباشر.`,
+      reply: prods.length
+        ? `تكرم — عنا: ${prodsTxt} ${fee}. أي منتج بتحب أثبته؟`
+        : `تكرم — كيف أساعدك بالطلب؟ اذكر اسم المنتج.`,
+      transfer_to_human: false,
+      intent: "شراء",
+    };
+  }
+  if (bookingOn && /موعد|حجز|احجز|book|appointment/.test(msg)) {
+    return {
+      reply: `يا هلا فيك 🌸 أهلاً بك في ${name}. احجز موعدك بكلمة "حجز" أو انضم لقائمتنا بـ"انتظار".`,
+      transfer_to_human: false,
+      intent: "حجز_موعد",
+    };
+  }
+  // استفسار عام
+  if (prods.length) {
+    return {
+      reply: `يا هلا فيك 😊 ${bookingOn ? `نخدمك في ${name} — ` : ""}عنا: ${prodsTxt} ${fee}. كيف أساعدك؟ ابعت "أريد موظف" لأي استفسار خاص.`,
       transfer_to_human: false,
       intent: "استفسار",
     };
   }
-  const prods = (tenant?.products || []).map((p) => `${p.name} (${p.price} د.أ)`).join("، ");
   return {
-    reply: `يا هلا فيك 😊 عنا: ${prods || "منتجاتنا"}.\nكيف أساعدك؟ ابعت "أريد موظف" لأي استفسار.`,
+    reply: `يا هلا فيك 🌸 بنخدمك في ${name} 😊 احجز موعدك بكلمة "حجز"، أو ابعت "أريد موظف" للتواصل المباشر.`,
     transfer_to_human: false,
     intent: "استفسار",
   };
