@@ -1,6 +1,6 @@
 // معالج الطلبات والتقييم: نسيان الطلبات + استعلام برقم + CSAT
 import { getOrder, fmtMoney } from "../../../../../orders.mjs";
-import { sendWhatsAppMessage } from "../../../../whatsapp/sender.mjs";
+import { sendChText } from "../../../../channels/send.mjs";
 import { pushHistory } from "../../../../memory/conversations.mjs";
 import { hasPendingCsat, saveRating } from "../../../../../engage.mjs";
 import { logEvent } from "../../../../../crm.mjs";
@@ -20,7 +20,7 @@ export async function handleCancelIntent(ctx) {
       await pushHistory(from, "user", text, tenant);
       await pushHistory(from, "assistant", reply, tenant);
       try {
-        await sendWhatsAppMessage(from, reply, tenant);
+        await sendChText(ctx, reply, tenant);
       } catch (se) {
         console.error(`  ❌ فشل الإرسال: ${se.message}`);
       }
@@ -35,7 +35,7 @@ export async function handleCancelIntent(ctx) {
     await pushHistory(from, "assistant", reply, tenant);
     logEvent("orders_forgotten", { tenantId: tenant?.id, phone: from, killed }).catch(() => {});
     try {
-      await sendWhatsAppMessage(from, reply, tenant);
+      await sendChText(ctx, reply, tenant);
     } catch (e) {
       console.error(`  ❌ فشل الإرسال: ${e.message}`);
     }
@@ -63,7 +63,7 @@ export async function handleOrderQuery(ctx) {
   await pushHistory(from, "assistant", reply, tenant);
   logEvent("message", { tenantId: tenant?.id, phone: from, intent: "استفسار", text: text.slice(0, 200) }).catch(() => {});
   try {
-    await sendWhatsAppMessage(from, reply, tenant);
+    await sendChText(ctx, reply, tenant);
   } catch (e) {
     console.error(`  ❌ فشل إرسال حالة الطلب: ${e.message}`);
   }
@@ -87,7 +87,7 @@ export async function handleCsat(ctx) {
   await pushHistory(from, "assistant", reply, tenant);
   logEvent("csat", { tenantId: tenant.id, phone: from, score, refId: pending.refId }).catch(() => {});
   try {
-    await sendWhatsAppMessage(from, reply, tenant);
+    await sendChText(ctx, reply, tenant);
   } catch (e) {
     console.error(`  ❌ فشل إرسال رد التقييم: ${e.message}`);
   }

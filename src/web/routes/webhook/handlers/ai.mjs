@@ -1,6 +1,7 @@
 // معالج الذكاء: أزرار المنتجات + مسار AI العادي (تصعيد + طلب + إرسال ذكي)
 import { processCustomerMessage } from "../../../../ai/engine.mjs";
-import { sendWhatsAppMessage, sendButtons, sendImage, defaultButtonsFor } from "../../../../whatsapp/sender.mjs";
+import { defaultButtonsFor } from "../../../../whatsapp/sender.mjs";
+import { sendChText, sendChButtons, sendChImage } from "../../../../channels/send.mjs";
 import { getHistory, pushHistory } from "../../../../memory/conversations.mjs";
 import { notifyStaff } from "../../../../compliance/messaging.mjs";
 import { tenantCurrency, fmtMoney } from "../../../../../orders.mjs";
@@ -22,8 +23,8 @@ export async function handleProductButtons(ctx) {
       await createOrderWithPayment(tenant, from, name, message, result);
     }
     const prod = (tenant.products || []).find((p) => p.buttonId === buttonId) || null;
-    if (prod?.image && tenant?.features?.images) await sendImage(from, prod.image, `${prod.name} - ${fmtMoney(prod.price, tenantCurrency(tenant))}`, tenant);
-    await sendWhatsAppMessage(from, result.reply, tenant);
+    if (prod?.image && tenant?.features?.images) await sendChImage(ctx, prod.image, `${prod.name} - ${fmtMoney(prod.price, tenantCurrency(tenant))}`, tenant);
+    await sendChText(ctx, result.reply, tenant);
   } catch (sendErr) {
     console.error(`  ❌ فشل الإرسال: ${sendErr.message}`);
   }
@@ -86,23 +87,23 @@ export async function handleAi(ctx) {
   // إرسال ذكي: صورة + نص + أزرار (حسب ما رجّع الـ AI)
   try {
     if (result.image && tenant?.features?.images) {
-      await sendImage(from, result.image, result.reply.slice(0, 200), tenant).catch(() => {});
+      await sendChImage(ctx, result.image, result.reply.slice(0, 200), tenant).catch(() => {});
       // مع الصورة نرسل الأزرار لو وجدت
       const btns = result.buttons?.length ? result.buttons : await defaultButtonsFor(tenant);
       if (tenant?.features?.buttons && btns?.length) {
-        await sendButtons(from, "شو بتحب تعمل هلا؟", btns, tenant).catch(() => {});
+        await sendChButtons(ctx, "شو بتحب تعمل هلا؟", btns, tenant).catch(() => {});
       }
     } else if (result.buttons?.length && tenant?.features?.buttons) {
-      await sendButtons(from, result.reply, result.buttons, tenant);
+      await sendChButtons(ctx, result.reply, result.buttons, tenant);
     } else {
       // أول عرض للمنتجات: أرفق أزرار تلقائياً حسب إعداد البوت —
       // features.autoButtonsFirstN (عدد الرسائل الأولى) + autoButtonsKeywords (كلمات تستحق الأزرار)
       const autoN = Number(tenant?.features?.autoButtonsFirstN || 0);
       const autoKw = tenant?.features?.autoButtonsKeywords || [];
       const histLen = (await getHistory(from, tenant)).length;
-      await sendWhatsAppMessage(from, result.reply, tenant);
+      await sendChText(ctx, result.reply, tenant);
       if (autoN > 0 && histLen <= autoN && (!autoKw.length || autoKw.some((k) => result.reply.includes(k)))) {
-        await sendButtons(from, "اختار بسرعة 👇", await defaultButtonsFor(tenant), tenant).catch(() => {});
+        await sendChButtons(ctx, "اختار بسرعة 👇", await defaultButtonsFor(tenant), tenant).catch(() => {});
       }
     }
   } catch (sendErr) {

@@ -5,17 +5,27 @@ import { webhookQueue } from "../../../jobs/queue.mjs";
 import { storeGet, storeSet, storeDel, storeKeys } from "../../../../store.mjs";
 import { channelForWebhookObject } from "../../../channels/registry.mjs";
 import { processWebhookBody } from "./process.mjs";
+import { processMessagingBody } from "./messaging.mjs";
 
 export function registerReceiveRoute(app) {
   app.post("/webhook", verifyMetaSignature, async (req, res) => {
     const body = req.body;
 
     // التحقق المبدئي من نوع الحدث عبر طبقة القنوات (وصل: واتساب/ماسنجر/انستغرام)
-    // حالياً whatsapp فقط — غيرها 404 صريح حتى تُفعَّل قناته
     const channelId = channelForWebhookObject(body?.object);
-    if (channelId !== "whatsapp") {
-      console.log(`  📥 POST /webhook - object غير مدعوم بعد: ${body?.object} (القنوات الجاهزة: whatsapp)`);
+    if (!channelId) {
+      console.log(`  📥 POST /webhook - object غير معروف: ${body?.object}`);
       return res.sendStatus(404);
+    }
+    // ماسنجر/انستغرام: رد فوري + طابور FIFO لكل مرسل (نفس سياسة واتساب)
+    if (channelId !== "whatsapp") {
+      res.status(200).send("EVENT_RECEIVED");
+      const firstEv = body.entry?.[0]?.messaging?.[0];
+      const senderKey = firstEv?.sender?.id ? `sender:${channelId}:${firstEv.sender.id}` : "unknown";
+      webhookQueue.enqueueOrdered(senderKey, `${channelId}:${body.entry?.[0]?.id || "event"}`, async () => {
+        await processMessagingBody(body, channelId);
+      });
+      return;
     }
 
     // P0-3 — سد نافذة فقدان الرسائل في الطيران:

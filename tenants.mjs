@@ -63,8 +63,9 @@ export async function getTenant(id) {
   return row;
 }
 
-// أهم دالة للعزل: نحل أي رسالة واتساب لأي tenant حسب phone_number_id
-export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
+// أهم دالة للعزل: نحل أي حدث لأي tenant حسب معرف القناة
+// (واتساب: phoneNumberId — ماسنجر: features.messengerPageId — انستغرام: features.instagramId)
+export async function resolveTenant({ phoneNumberId, verifyToken, pageId, channel } = {}) {
   const tenants = await loadTenants();
   const envPhoneId = process.env.WHATSAPP_PHONE_ID;
   const envVerify = process.env.WEBHOOK_VERIFY_TOKEN || "my_secret_token";
@@ -98,6 +99,20 @@ export async function resolveTenant({ phoneNumberId, verifyToken } = {}) {
   if (verifyToken) {
     const hit = tenants.find((t) => (t.verifyToken || envVerify) === verifyToken);
     if (hit) return withEnvDefaults(hit);
+  }
+  // قنوات وصل: ماسنجر/انستغرام تُحل عبر معرف الصفحة/الحساب ببيانات البوت —
+  // رقم واحد لكل هوية: التكرار مرفوض مثل أرقام واتساب (fail-closed)
+  if (pageId) {
+    const matches = tenants.filter(
+      (t) => t.features?.messengerPageId === pageId || t.features?.instagramId === pageId
+    );
+    if (matches.length > 1) {
+      console.error(`  ⛔ هوية قناة مشتركة مرفوضة: ${pageId} على ${matches.map((t) => t.id).join("، ")} — هوية واحدة لكل بوت`);
+      return null;
+    }
+    if (matches[0]) return withEnvDefaults(matches[0]);
+    console.warn(`  ⛔ هوية قناة غير مسجلة (${channel || "?"}:${pageId}) — تجاهل`);
+    return null;
   }
   // بلا معيار مطابقة: لا بوت افتراضي صامت — المتصل يحدد البوت صراحةً
   console.warn("  ⚠️ resolveTenant بلا phoneNumberId ولا verifyToken — رفض (لا افتراضي صامت بمنصة وصل)");
@@ -164,6 +179,7 @@ export async function updateTenant(id, data) {
   for (const k of allowed) if (data[k] !== undefined) clean[k] = data[k];
   // قاعدة المنصة: رقم واحد لكل بوت — مشاركة الأرقام مرفوضة (تمنع خلط الردود)
   if (clean.phoneNumberId) await assertPhoneUnique(clean.phoneNumberId, id);
+  if (clean.features) await assertChannelIdentities(clean.features, id);
   // whatsappToken يُقبل باسم whatsappToken أو whatsapp_token ويُشفر قبل التخزين
   const rawToken = data.whatsappToken ?? data.whatsapp_token;
   if (rawToken !== undefined) {
@@ -192,6 +208,7 @@ export async function addTenant(data) {
   }
   const phoneNumberId = data.phone_number_id || data.phoneNumberId || null;
   if (phoneNumberId) await assertPhoneUnique(phoneNumberId, null);
+  if (data.features) await assertChannelIdentities(data.features, null);
   const rawToken = data.whatsappToken ?? data.whatsapp_token;
   const created = await systemDb("tenants:create").tenant.create({
     data: {
@@ -230,6 +247,23 @@ async function assertPhoneUnique(phoneNumberId, exceptId) {
     const e = new Error(`الرقم ${phoneNumberId} مسجل مسبقاً على بوت "${clash.id}" — رقم واحد لكل بوت`);
     e.code = "PHONE_TAKEN";
     throw e;
+  }
+}
+
+// هوية قناة واحدة لكل بوت (صفحة ماسنجر / حساب انستغرام) — نفس قاعدة الأرقام
+async function assertChannelIdentities(features, exceptId) {
+  const ids = [features?.messengerPageId, features?.instagramId].filter(Boolean);
+  if (!ids.length) return;
+  const all = await loadTenants();
+  for (const id of ids) {
+    const clash = all.find(
+      (t) => t.id !== exceptId && (t.features?.messengerPageId === id || t.features?.instagramId === id)
+    );
+    if (clash) {
+      const e = new Error(`هوية القناة ${id} مسجلة مسبقاً على بوت "${clash.id}" — هوية واحدة لكل بوت`);
+      e.code = "CHANNEL_TAKEN";
+      throw e;
+    }
   }
 }
 

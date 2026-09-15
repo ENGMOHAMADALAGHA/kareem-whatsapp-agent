@@ -179,26 +179,18 @@ test("signClientToken: انتهاء 12h (43200 ثانية)", async () => {
   assert.equal(payload.exp - payload.iat, 12 * 60 * 60);
 });
 
-// ── القنوات: سجل + محوّل واتساب (نفس السلوك) + stubs صريحة ──
-test("channels: الثلاث معرفة، والمجهول يرمي، والـ stubs صريحة", async () => {
+// ── القنوات: سجل القنوات الثلاث وتعيين الأحداث ──
+test("channels: الثلاث معرفة والمجهول يرمي وتعيين الأحداث صح", async () => {
   const { getChannel, channelIds, channelForWebhookObject } = await import("../src/channels/registry.mjs");
   assert.deepEqual(channelIds().sort(), ["instagram", "messenger", "whatsapp"]);
   assert.equal(getChannel("whatsapp").id, "whatsapp");
+  assert.equal(getChannel("messenger").id, "messenger");
+  assert.equal(getChannel("instagram").id, "instagram");
   assert.throws(() => getChannel("telegram"), /غير معروف/);
   assert.equal(channelForWebhookObject("whatsapp_business_account"), "whatsapp");
   assert.equal(channelForWebhookObject("page"), "messenger");
   assert.equal(channelForWebhookObject("instagram"), "instagram");
   assert.equal(channelForWebhookObject("nope"), null);
-  const mg = getChannel("messenger");
-  try {
-    mg.sendText("x", "y", {});
-    assert.fail("يجب أن يرمي CHANNEL_NOT_READY");
-  } catch (e) {
-    assert.equal(e.code, "CHANNEL_NOT_READY");
-  }
-  assert.equal(mg.normalizeSender("123"), "msg:123");
-  const ig = getChannel("instagram");
-  assert.equal(ig.normalizeSender("456"), "ig:456");
 });
 test("channels/whatsapp: استخراج نص/زر/اسم ووسائط وتطبيع المرسل", async () => {
   const { getChannel } = await import("../src/channels/registry.mjs");
@@ -246,4 +238,50 @@ test("queue: الامتلاء يُسقط مع QUEUE_FULL بدل النمو لل�
   const s = q.stats();
   assert.ok(s.dropped >= 1);
   assert.equal(s.maxQueued, 3);
+});
+
+// ── القنوات الكاملة: ماسنجر/انستغرام استخراج + إرسال موحد عبر ctx ──
+test("channels/messenger+instagram: استخراج حدث messaging + ردود سريعة", async () => {
+  const { getChannel } = await import("../src/channels/registry.mjs");
+  const { toQuickReplies } = await import("../src/channels/messenger.mjs");
+  const mg = getChannel("messenger");
+  assert.equal(mg.receiverId({ recipient: { id: "PAGE1" } }), "PAGE1");
+  const t = mg.extractText({ sender: { id: "U1" }, message: { text: "مرحبا" } });
+  assert.equal(t.text, "مرحبا");
+  assert.equal(t.buttonId, null);
+  const pb = mg.extractText({ sender: { id: "U1" }, postback: { payload: "slot_10:00", title: "10:00" } });
+  assert.equal(pb.buttonId, "slot_10:00");
+  assert.equal(mg.extractMedia({ message: { attachments: [{ type: "image", payload: { url: "https://x/y.jpg" } }] } }).id, "https://x/y.jpg");
+  assert.equal(mg.extractMedia({ message: { text: "x" } }), null);
+  const ig = getChannel("instagram");
+  assert.equal(ig.receiverId({ recipient: { id: "IG1" } }), "IG1");
+  assert.deepEqual(toQuickReplies([{ id: "a", title: "عنوان طويل جداً جداً جداً جداً" }]), [
+    { content_type: "text", title: "عنوان طويل جداً جداً", payload: "a" },
+  ]);
+});
+test("channels/send: التوجيه حسب القناة + رفض opt-out", async () => {
+  const { sendChText, sendChButtons } = await import("../src/channels/send.mjs");
+  const calls = [];
+  const fakeTenant = { id: "t1" };
+  const mgCtx = {
+    from: "msg:U1",
+    tenant: fakeTenant,
+    channel: {
+      id: "messenger",
+      async sendText(to, text) { calls.push(["text", to, text]); return { ok: true }; },
+      async sendButtons(to, text, buttons) { calls.push(["btn", to, text, buttons]); return { ok: true }; },
+    },
+  };
+  await sendChText(mgCtx, "هلا");
+  await sendChButtons(mgCtx, "اختر", [{ id: "a", title: "أ" }]);
+  assert.deepEqual(calls[0], ["text", "msg:U1", "هلا"]);
+  assert.equal(calls[1][0], "btn");
+  // whatsapp بلا توكن حقيقي → وضع محاكاة صريح (لا يلمس الشبكة أبداً)
+  const { getChannel } = await import("../src/channels/registry.mjs");
+  const waCtx = {
+    from: "962790000000",
+    tenant: { id: "t1", features: {}, whatsapp_token: "DEMO_WHATSAPP_TOKEN", phone_number_id: "DEMO_PHONE_ID" },
+    channel: getChannel("whatsapp"),
+  };
+  await assert.rejects(sendChText(waCtx, "x"), /simulated-no-credentials/);
 });

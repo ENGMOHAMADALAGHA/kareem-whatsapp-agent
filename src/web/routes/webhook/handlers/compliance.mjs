@@ -1,7 +1,7 @@
 // معالج الامتثال والطاقم: إلغاء/إعادة اشتراك + أوامر الموظف + takeover
 import { STAFF_PHONE } from "../../../../config/env.mjs";
 import { normalizePhone } from "../../../../utils/phone.mjs";
-import { sendWhatsAppMessage } from "../../../../whatsapp/sender.mjs";
+import { sendChText } from "../../../../channels/send.mjs";
 import { pushHistory } from "../../../../memory/conversations.mjs";
 import { setTakeover, isTakeover } from "../../../../inbox/service.mjs";
 import { logEvent } from "../../../../../crm.mjs";
@@ -16,7 +16,7 @@ export async function handleCompliance(ctx) {
     await pushHistory(from, "assistant", reply, tenant);
     logEvent("opt_out", { tenantId: tenant?.id, phone: from }).catch(() => {});
     try {
-      await sendWhatsAppMessage(from, reply, tenant);
+      await sendChText(ctx, reply, tenant);
     } catch (e) {
       console.error(`  ❌ فشل إرسال تأكيد الإلغاء: ${e.message}`);
     }
@@ -31,7 +31,7 @@ export async function handleCompliance(ctx) {
     await pushHistory(from, "assistant", reply, tenant);
     logEvent("opt_in", { tenantId: tenant?.id, phone: from }).catch(() => {});
     try {
-      await sendWhatsAppMessage(from, reply, tenant);
+      await sendChText(ctx, reply, tenant);
     } catch (e) {
       console.error(`  ❌ فشل الإرسال: ${e.message}`);
     }
@@ -58,7 +58,7 @@ export async function handleStaff(ctx) {
     await pushHistory(from, "assistant", reply, tenant);
     logEvent(on ? "staff_pause" : "staff_resume", { tenantId: tenant?.id, phone: from }).catch(() => {});
     try {
-      await sendWhatsAppMessage(from, reply, tenant);
+      await sendChText(ctx, reply, tenant);
     } catch (e) {
       console.error(`  ❌ فشل إرسال تأكيد أمر الطاقم: ${e.message}`);
     }

@@ -15,6 +15,10 @@ export const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || "my_secr
 export const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 export const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 
+// ── قنوات وصل: ماسنجر + انستغرام (توكن عام للتطوير — الإنتاج: توكن كل بوت ببياناته) ──
+export const MESSENGER_PAGE_TOKEN = process.env.MESSENGER_PAGE_TOKEN || "";
+export const INSTAGRAM_PAGE_TOKEN = process.env.INSTAGRAM_PAGE_TOKEN || "";
+
 export const ADMIN_USER = process.env.ADMIN_USER || "";
 export const ADMIN_PASS = process.env.ADMIN_PASS || "";
 export const JWT_SECRET = process.env.JWT_SECRET || "";

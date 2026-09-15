@@ -7,7 +7,7 @@ import {
   isSlotTaken,
   freeSlots,
 } from "../../../../../bookings.mjs";
-import { sendWhatsAppMessage, sendButtons } from "../../../../whatsapp/sender.mjs";
+import { sendChText, sendChButtons } from "../../../../channels/send.mjs";
 import { pushHistory } from "../../../../memory/conversations.mjs";
 import { notifyOwner } from "../../../../compliance/messaging.mjs";
 import { logEvent } from "../../../../../crm.mjs";
@@ -31,13 +31,13 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reply, tenant);
     try {
-      await sendButtons(from, reply, [
+      await sendChButtons(ctx, reply, [
         { id: "pain_tooth", title: "🦷 ضرس" },
         { id: "pain_gum", title: "لثة" },
         { id: "pain_jaw", title: "فك" },
       ], tenant);
     } catch (e) {
-      await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+      await sendChText(ctx, reply, tenant).catch(() => {});
     }
     console.log(`  🩺 بدء فرز ${tenant.id} للعميل ${from}`);
     console.log(`${"─".repeat(60)}\n`);
@@ -52,7 +52,7 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reply, tenant);
     try {
-      await sendWhatsAppMessage(from, reply, tenant);
+      await sendChText(ctx, reply, tenant);
     } catch (e) {
       console.error(`  ❌ فشل الإرسال: ${e.message}`);
     }
@@ -68,12 +68,12 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reply, tenant);
     try {
-      await sendButtons(from, reply, [
+      await sendChButtons(ctx, reply, [
         { id: "red_swelling", title: "ورم" },
         { id: "red_none", title: "لا، ما في" },
       ], tenant);
     } catch (e) {
-      await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+      await sendChText(ctx, reply, tenant).catch(() => {});
     }
     console.log(`${"─".repeat(60)}\n`);
     return true;
@@ -99,7 +99,7 @@ export async function handleBooking(ctx) {
         await pushHistory(from, "user", text, tenant);
         await pushHistory(from, "assistant", reply, tenant);
         try {
-          await sendWhatsAppMessage(from, reply, tenant);
+          await sendChText(ctx, reply, tenant);
         } catch (e) {
           console.error(`  ❌ فشل الإرسال: ${e.message}`);
         }
@@ -111,7 +111,7 @@ export async function handleBooking(ctx) {
         await pushHistory(from, "user", text, tenant);
         await pushHistory(from, "assistant", staffReply, tenant);
         try {
-          await sendWhatsAppMessage(from, staffReply, tenant);
+          await sendChText(ctx, staffReply, tenant);
         } catch (se) {
           console.error(`  ❌ فشل إرسال تنبيه الطوارئ: ${se.message}`);
         }
@@ -126,9 +126,9 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reply, tenant);
     try {
-      await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+      await sendChButtons(ctx, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
     } catch (e) {
-      await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+      await sendChText(ctx, reply, tenant).catch(() => {});
     }
     console.log(`  🩺 فرز عادي → حجز ${tenant.id} ${from}`);
     console.log(`${"─".repeat(60)}\n`);
@@ -144,7 +144,7 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "assistant", reply, tenant);
     logEvent("waiting_join", { tenantId: tenant.id, phone: from, service }).catch(() => {});
     try {
-      await sendWhatsAppMessage(from, reply, tenant);
+      await sendChText(ctx, reply, tenant);
     } catch (e) {
       console.error(`  ❌ فشل الإرسال: ${e.message}`);
     }
@@ -163,7 +163,7 @@ export async function handleBooking(ctx) {
       const expired = `انتهت مهلة العرض يا غالي 😊 الموعد بيعطي بالعادة خلال ساعة من عرضه. ابعت "حجز" لموعد جديد أو "انتظار" لعودتك للقائمة.`;
       await pushHistory(from, "user", text, tenant);
       await pushHistory(from, "assistant", expired, tenant);
-      try { await sendWhatsAppMessage(from, expired, tenant); } catch (e) { console.error(`  ❌ فشل الإرسال: ${e.message}`); }
+      try { await sendChText(ctx, expired, tenant); } catch (e) { console.error(`  ❌ فشل الإرسال: ${e.message}`); }
       console.log(`  ⏳ عرض منتهي ${tenant.id} ${from}`);
       console.log(`${"─".repeat(60)}\n`);
       return true;
@@ -176,7 +176,7 @@ export async function handleBooking(ctx) {
       await pushHistory(from, "assistant", reply, tenant);
       logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: accepted.id, fromWaiting: true }).catch(() => {});
       try {
-        await sendWhatsAppMessage(from, reply, tenant);
+        await sendChText(ctx, reply, tenant);
       } catch (e) {
         console.error(`  ❌ فشل الإرسال: ${e.message}`);
       }
@@ -194,8 +194,8 @@ export async function handleBooking(ctx) {
       await pushHistory(from, "user", text, tenant);
       await pushHistory(from, "assistant", reply, tenant);
       try {
-        if (taken && free.length) await sendButtons(from, reply, free.slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
-        else await sendWhatsAppMessage(from, reply, tenant);
+        if (taken && free.length) await sendChButtons(ctx, reply, free.slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+        else await sendChText(ctx, reply, tenant);
       } catch (se) { console.error(`  ❌ فشل الإرسال: ${se.message}`); }
       console.log(`  ⚠️ فشل تأكيد العرض ${tenant.id} ${from}: ${e.message}`);
     }
@@ -214,9 +214,9 @@ export async function handleBooking(ctx) {
       await pushHistory(from, "user", text, tenant);
       await pushHistory(from, "assistant", reply, tenant);
       try {
-        await sendButtons(from, reply, services.slice(0, 3).map((s, i) => ({ id: `svc_${i}`, title: `${s.name} (${s.price} د.أ)` })), tenant);
+        await sendChButtons(ctx, reply, services.slice(0, 3).map((s, i) => ({ id: `svc_${i}`, title: `${s.name} (${s.price} د.أ)` })), tenant);
       } catch (e) {
-        await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+        await sendChText(ctx, reply, tenant).catch(() => {});
       }
       console.log(`  📅 بدء حجز (اختيار خدمة) ${tenant.id} للعميل ${from}`);
       console.log(`${"─".repeat(60)}\n`);
@@ -229,9 +229,9 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reply, tenant);
     try {
-      await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+      await sendChButtons(ctx, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
     } catch (e) {
-      await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+      await sendChText(ctx, reply, tenant).catch(() => {});
     }
     console.log(`  📅 بدء حجز ${tenant.id} للعميل ${from}`);
     console.log(`${"─".repeat(60)}\n`);
@@ -253,9 +253,9 @@ export async function handleBooking(ctx) {
       await pushHistory(from, "user", text, tenant);
       await pushHistory(from, "assistant", reply, tenant);
       try {
-        await sendButtons(from, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+        await sendChButtons(ctx, reply, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
       } catch (e) {
-        await sendWhatsAppMessage(from, reply, tenant).catch(() => {});
+        await sendChText(ctx, reply, tenant).catch(() => {});
       }
       console.log(`  🩺 اختيرت الخدمة ${chosen.name} ${tenant.id} ${from}`);
       console.log(`${"─".repeat(60)}\n`);
@@ -265,9 +265,9 @@ export async function handleBooking(ctx) {
     await pushHistory(from, "user", text, tenant);
     await pushHistory(from, "assistant", reask, tenant);
     try {
-      await sendButtons(from, reask, services.slice(0, 3).map((s, i) => ({ id: `svc_${i}`, title: `${s.name} (${s.price} د.أ)` })), tenant);
+      await sendChButtons(ctx, reask, services.slice(0, 3).map((s, i) => ({ id: `svc_${i}`, title: `${s.name} (${s.price} د.أ)` })), tenant);
     } catch (e) {
-      await sendWhatsAppMessage(from, reask, tenant).catch(() => {});
+      await sendChText(ctx, reask, tenant).catch(() => {});
     }
     console.log(`${"─".repeat(60)}\n`);
     return true;
@@ -296,9 +296,9 @@ export async function handleBooking(ctx) {
         await pushHistory(from, "assistant", reply, tenant);
         try {
           if (free.length) {
-            await sendButtons(from, reply, free.slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+            await sendChButtons(ctx, reply, free.slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
           } else {
-            await sendWhatsAppMessage(from, reply, tenant);
+            await sendChText(ctx, reply, tenant);
           }
         } catch (e) {
           console.error(`  ❌ فشل الإرسال: ${e.message}`);
@@ -319,7 +319,7 @@ export async function handleBooking(ctx) {
           if (!free.length) await joinWaitingList({ tenantId: tenant.id, phone: from, name, service });
           await pushHistory(from, "user", text, tenant);
           await pushHistory(from, "assistant", reply, tenant);
-          try { await sendWhatsAppMessage(from, reply, tenant); } catch (se) { console.error(`  ❌ فشل الإرسال: ${se.message}`); }
+          try { await sendChText(ctx, reply, tenant); } catch (se) { console.error(`  ❌ فشل الإرسال: ${se.message}`); }
           console.log(`${"─".repeat(60)}\n`);
           return true;
         }
@@ -332,7 +332,7 @@ export async function handleBooking(ctx) {
       await pushHistory(from, "assistant", reply, tenant);
       logEvent("booking", { tenantId: tenant.id, phone: from, bookingId: booking.id, service, slot }).catch(() => {});
       try {
-        await sendWhatsAppMessage(from, reply, tenant);
+        await sendChText(ctx, reply, tenant);
       } catch (e) {
         console.error(`  ❌ فشل الإرسال: ${e.message}`);
       }
@@ -347,9 +347,9 @@ export async function handleBooking(ctx) {
       await pushHistory(from, "user", text, tenant);
       await pushHistory(from, "assistant", hint, tenant);
       try {
-        await sendButtons(from, hint, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
+        await sendChButtons(ctx, hint, (tenant.features.bookingSlots || []).slice(0, 3).map((s) => ({ id: `slot_${s}`, title: `🕐 ${s}` })), tenant);
       } catch (e) {
-        await sendWhatsAppMessage(from, hint, tenant).catch(() => {});
+        await sendChText(ctx, hint, tenant).catch(() => {});
       }
       console.log(`${"─".repeat(60)}\n`);
       return true;
