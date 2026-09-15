@@ -20,6 +20,7 @@
     "db:sql": "node scripts/db-schema.mjs",
     "db:init": "node scripts/db-init.mjs",
     "db:to-neon": "node scripts/migrate-neon.mjs",
+    "demo:channels": "node scripts/demo-channels.mjs",
     "backup": "node scripts/backup.mjs"
   },
   "keywords": [
