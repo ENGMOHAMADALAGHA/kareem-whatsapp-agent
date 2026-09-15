@@ -15,8 +15,8 @@
 | من هو كريم؟ | **مستأجر رقم 1 فقط** (`kareem-sport` — متجر رياضي تجريبي). ليس اسم المنصة |
 | المستأجر الثاني | ليان (`agha-dental` — عيادة أسنان تجريبية) |
 | السوق | الأردن (عيادات + محلات) — التوسع الخليجي لاحقاً |
-| المستودع | `ENGMOHAMADALAGHA/kareem-whatsapp-agent` (الاسم التاريخي، لا يغيّر الهوية) |
-| الإنتاج | `https://kareem-whatsapp-agent.onrender.com` (رابط تاريخي، يُبدّل عند النقل) |
+| المستودع | `ENGMOHAMADALAGHA/wasl-command-center` (الاسم التاريخي، لا يغيّر الهوية) |
+| الإنتاج | `https://wasl-command-center.onrender.com` (رابط الإنتاج الحالي) |
 
 ---
 

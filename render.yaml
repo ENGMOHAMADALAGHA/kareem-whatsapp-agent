@@ -3,7 +3,7 @@
 # النشر الحالي مرتبط بالكود عبر Auto-Deploy من GitHub مباشرة).
 services:
   - type: web
-    name: kareem-whatsapp-agent
+    name: wasl-command-center
     runtime: node
     plan: free
     buildCommand: npm install

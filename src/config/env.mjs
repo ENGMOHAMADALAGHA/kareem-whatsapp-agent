@@ -27,7 +27,7 @@ export const JWT_SECRET = process.env.JWT_SECRET || "";
 export const SHARED_NUMBER_TENANT_ID = process.env.SHARED_NUMBER_TENANT_ID || "";
 export const TOKEN_ENC_KEY = process.env.TOKEN_ENC_KEY || "";
 
-export const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://kareem-whatsapp-agent.onrender.com";
+export const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://wasl-command-center.onrender.com";
 export const CRM_WEBHOOK_URL = process.env.CRM_WEBHOOK_URL || "";
 
 export const META_APP_SECRET = process.env.META_APP_SECRET || "";

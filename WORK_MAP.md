@@ -8,8 +8,8 @@
 - **المنتجات (كريم):** حذاء ركض 50 د.أ / حزام دعم ظهر 20 د.أ / توصيل 5 د.أ / عرض Bundle 70 د.أ شامل (الدينار عملة المنصة — راجع `REFERENCE.md` D1)
 - **الخدمات (ليان):** تنظيف $30 / حشوة $80 / تقويم (استشارة $0)
 - **المنصة:** واتساب Cloud API (Meta) + Node.js + Express + Google Gemini
-- **الاستضافة:** Render (https://kareem-whatsapp-agent.onrender.com)
-- **المستودع:** https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
+- **الاستضافة:** Render (https://wasl-command-center.onrender.com)
+- **المستودع:** https://github.com/ENGMOHAMADALAGHA/wasl-command-center
 
 ---
 
@@ -84,7 +84,7 @@ WHATSAPP_TOKEN=EAA... (من Meta Developers - لا يُحفظ في Git)
 WHATSAPP_PHONE_ID=1300758353117196
 TOKEN_ENC_KEY=<نص عشوائي طويل — إجباري لحفظ توكن أي بوت من /admin (بلا تشفير مرفوض)>
 
-PUBLIC_BASE_URL=https://kareem-whatsapp-agent.onrender.com
+PUBLIC_BASE_URL=https://wasl-command-center.onrender.com
 CRM_WEBHOOK_URL= (اختياري - Sheets عبر Make/n8n)
 ADMIN_USER=admin
 ADMIN_PASS=<كلمة قوية>
@@ -244,7 +244,7 @@ graph TD
 3. Business Portfolio → **AGha Gaming**
 4. **الخطوة 1. جرّب:** `Phone Number ID 1300758353117196` و `+1 555 667-6129` والتوكن (إنشاء رمز)
 5. **الخطوة 2. إعداد التشغيل → تكوين Webhooks:**
-   - **Callback URL:** `https://kareem-whatsapp-agent.onrender.com/webhook`
+   - **Callback URL:** `https://wasl-command-center.onrender.com/webhook`
    - **Verify Token:** قيمة `WEBHOOK_VERIFY_TOKEN` الفعلية من البيئة (ليست `my_secret_token`)
    - **Fields:** `messages` = **مشترك** (أزرق)
    - **Subscribe WABA:** `POST /1329892032314692/subscribed_apps`
@@ -257,13 +257,13 @@ graph TD
 ### GitHub
 ```bash
 git add . && git commit -m "msg" && git push origin main
-# المستودع: https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
+# المستودع: https://github.com/ENGMOHAMADALAGHA/wasl-command-center
 ```
 
 ### Render
 - Build: `npm install`, Start: `npm start`, Region Oregon, Plan Free
 - Env Vars: كل متغيرات قسم 3 + Auto-Deploy: **yes**
-- URL: `https://kareem-whatsapp-agent.onrender.com`
+- URL: `https://wasl-command-center.onrender.com`
 
 ### keep-alive
 - `.github/workflows/keep-alive.yml` كل 10د + `cron-job.org` كبديل
@@ -324,10 +324,10 @@ git add . && git commit -m "msg" && git push
 curl "http://localhost:3000/webhook?hub.mode=subscribe&hub.verify_token=<TOKEN>&hub.challenge=12345"
 curl -X POST http://localhost:3000/webhook -H "Content-Type: application/json" -d '{"object":"whatsapp_business_account","entry":[{"changes":[{"value":{"messages":[{"from":"962790362429","id":"wamid.test1","type":"text","text":{"body":"مرحبا"}}]},"field":"messages"}]}]}'
 # Admin (مع Auth)
-curl -u admin:PASS https://kareem-whatsapp-agent.onrender.com/admin/tenants
-curl -u admin:PASS https://kareem-whatsapp-agent.onrender.com/admin/crm/export.csv -o crm.csv
+curl -u admin:PASS https://wasl-command-center.onrender.com/admin/tenants
+curl -u admin:PASS https://wasl-command-center.onrender.com/admin/crm/export.csv -o crm.csv
 # Render
-curl https://kareem-whatsapp-agent.onrender.com/
+curl https://wasl-command-center.onrender.com/
 ```
 
 ---
@@ -361,7 +361,7 @@ curl https://kareem-whatsapp-agent.onrender.com/
 - Render Docs: https://render.com/docs/web-services#port-binding
 - Google AI Studio: https://aistudio.google.com/app/apikey
 - Meta Template Guides: https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates
-- GitHub: https://github.com/ENGMOHAMADALAGHA/kareem-whatsapp-agent
+- GitHub: https://github.com/ENGMOHAMADALAGHA/wasl-command-center
 - Render Service ID: `srv-dabjdru1egvs73b15050`
 
 ---
